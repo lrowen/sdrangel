@@ -80,6 +80,7 @@ private:
     Real totalPower(int bin, int channelBins) const;
     Real peakPower(int bin, int channelBins) const;
     Real magSq(int bin) const;
+    Real voiceActivityLevel(int bin, int channelBins, bool isLSB) const;
 };
 
 #endif // INCLUDE_FREQSCANNERSINK_H

@@ -49,11 +49,17 @@ struct FreqScannerSettings
     qint32 m_channelFrequencyOffset;//!< Minimum DC offset of tuned channel
     qint32 m_channelShift;          //!< Channel frequency shift
     Real m_threshold;               //!< Power threshold in dB
+    Real m_voiceSquelchThreshold;   //!< Voice squelch threshold in the range [0.0, 1.0]. Only relevant if voice squelch is enabled.
     QString m_channel;              //!< Channel (E.g: R1:4) to tune to active frequency
     QList<FrequencySettings> m_frequencySettings; //!< Frequencies to scan and corresponding settings
     float m_scanTime;               //!< In seconds
     float m_retransmitTime;         //!< In seconds
     int m_tuneTime;                 //!< In milliseconds
+    enum VoiceSquelchType {
+        None,
+        VoiceLsb,
+        VoiceUsb,
+    } m_voiceSquelchType;           //!< Voice squelch type for SSB modes. None means no voice squelch, VoiceLsb means voice squelch on lower sideband frequencies, VoiceUsb means voice squelch on upper sideband frequencies.
     enum Priority {
         MAX_POWER,
         TABLE_ORDER

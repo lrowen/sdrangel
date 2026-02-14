@@ -46,6 +46,8 @@ void FreqScannerSettings::resetToDefaults()
     m_scanTime = 0.1f;
     m_retransmitTime = 2.0f;
     m_tuneTime = 100;
+    m_voiceSquelchThreshold = 0.5f;
+    m_voiceSquelchType = None;
     m_priority = MAX_POWER;
     m_measurement = PEAK;
     m_mode = CONTINUOUS;
@@ -76,6 +78,8 @@ QByteArray FreqScannerSettings::serialize() const
     s.writeS32(2, m_channelBandwidth);
     s.writeS32(3, m_channelFrequencyOffset);
     s.writeFloat(4, m_threshold);
+    s.writeS32(5, (int)m_voiceSquelchType);
+    s.writeFloat(6, m_voiceSquelchThreshold);
     s.writeString(8, m_channel);
     s.writeFloat(9, m_scanTime);
     s.writeFloat(10, m_retransmitTime);
@@ -130,6 +134,8 @@ bool FreqScannerSettings::deserialize(const QByteArray& data)
         d.readS32(2, &m_channelBandwidth, 25000);
         d.readS32(3, &m_channelFrequencyOffset, 25000);
         d.readFloat(4, &m_threshold, -60.0f);
+        d.readS32(5, (int*)&m_voiceSquelchType, (int)None);
+        d.readFloat(6, &m_voiceSquelchThreshold, 0.5f);
         d.readString(8, &m_channel);
         d.readFloat(9, &m_scanTime, 0.1f);
         d.readFloat(10, &m_retransmitTime, 2.0f);
@@ -222,6 +228,12 @@ void FreqScannerSettings::applySettings(const QStringList& settingsKeys, const F
     if (settingsKeys.contains("threshold")) {
         m_threshold = settings.m_threshold;
     }
+    if (settingsKeys.contains("voiceSquelchThreshold")) {
+        m_voiceSquelchThreshold = settings.m_voiceSquelchThreshold;
+    }
+    if (settingsKeys.contains("voiceSquelchType")) {
+        m_voiceSquelchType = settings.m_voiceSquelchType;
+    }
     if (settingsKeys.contains("frequencySettings")) {
         m_frequencySettings = settings.m_frequencySettings;
     }
@@ -302,6 +314,12 @@ QString FreqScannerSettings::getDebugString(const QStringList& settingsKeys, boo
     }
     if (settingsKeys.contains("threshold") || force) {
         ostr << " m_threshold: " << m_threshold;
+    }
+    if (settingsKeys.contains("voiceSquelchThreshold") || force) {
+        ostr << " m_voiceSquelchThreshold: " << m_voiceSquelchThreshold;
+    }
+    if (settingsKeys.contains("voiceSquelchType") || force) {
+        ostr << " m_voiceSquelchType: " << m_voiceSquelchType;
     }
     if (settingsKeys.contains("frequencySettings") || force)
     {

@@ -361,6 +361,19 @@ void FreqScannerGUI::on_thresh_valueChanged(int value)
     applySetting("threshold");
 }
 
+void FreqScannerGUI::on_voiceThreshold_valueChanged(int value)
+{
+    ui->voiceThresholdText->setText(QString("%1").arg(value / 100.0, 0, 'f', 2));
+    m_settings.m_voiceSquelchThreshold = value / 100.0;
+    applySetting("voiceSquelchThreshold");
+}
+
+void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
+{
+    m_settings.m_voiceSquelchType = (FreqScannerSettings::VoiceSquelchType)index;
+    applySetting("voiceSquelchType");
+}
+
 void FreqScannerGUI::on_priority_currentIndexChanged(int index)
 {
     m_settings.m_priority = (FreqScannerSettings::Priority)index;
@@ -607,6 +620,9 @@ void FreqScannerGUI::displaySettings()
     ui->tuneTimeText->setText(QString("%1 ms").arg(m_settings.m_tuneTime));
     ui->thresh->setValue(m_settings.m_threshold * 10.0);
     ui->threshText->setText(QString("%1 dB").arg(m_settings.m_threshold, 0, 'f', 1));
+    ui->voiceThreshold->setValue(m_settings.m_voiceSquelchThreshold * 100.0);
+    ui->voiceThresholdText->setText(QString("%1").arg(m_settings.m_voiceSquelchThreshold, 0, 'f', 2));
+    ui->voiceSquelch->setCurrentIndex((int)m_settings.m_voiceSquelchType);
     ui->priority->setCurrentIndex((int)m_settings.m_priority);
     ui->measurement->setCurrentIndex((int)m_settings.m_measurement);
     ui->mode->setCurrentIndex((int)m_settings.m_mode);
@@ -1256,6 +1272,8 @@ void FreqScannerGUI::makeUIConnections()
     QObject::connect(ui->retransmitTime, &QDial::valueChanged, this, &FreqScannerGUI::on_retransmitTime_valueChanged);
     QObject::connect(ui->tuneTime, &QDial::valueChanged, this, &FreqScannerGUI::on_tuneTime_valueChanged);
     QObject::connect(ui->thresh, &QDial::valueChanged, this, &FreqScannerGUI::on_thresh_valueChanged);
+    QObject::connect(ui->voiceSquelch, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_voiceSquelchType_currentIndexChanged);
+    QObject::connect(ui->voiceThreshold, &QDial::valueChanged, this, &FreqScannerGUI::on_voiceThreshold_valueChanged);
     QObject::connect(ui->priority, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_priority_currentIndexChanged);
     QObject::connect(ui->measurement, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_measurement_currentIndexChanged);
     QObject::connect(ui->mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_mode_currentIndexChanged);

@@ -144,8 +144,17 @@ void FreqScannerSink::processOneSample(Complex &ci)
                             } else {
                                 power = totalPower(bin, channelBins);
                             }
-                            //qDebug() << "startFrequency:" << startFrequency << "m_scannerSampleRate:" << m_scannerSampleRate << "m_centerFrequency:" << m_centerFrequency << "frequency" << frequency << "bin" << bin << "power" << power;
-                            FreqScanner::MsgScanResult::ScanResult result = {frequency, power};
+
+                            // Calculate voice activity level if using voice trigger
+                            Real voiceLevel = 0.0;
+                            if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb) {
+                                voiceLevel = voiceActivityLevel(bin, channelBins, true);
+                            } else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) {
+                                voiceLevel = voiceActivityLevel(bin, channelBins, false);
+                            }
+
+                            //qDebug() << "startFrequency:" << startFrequency << "m_scannerSampleRate:" << m_scannerSampleRate << "m_centerFrequency:" << m_centerFrequency << "frequency" << frequency << "bin" << bin << "power" << power << "voiceLevel" << voiceLevel;
+                            FreqScanner::MsgScanResult::ScanResult result = {frequency, power, voiceLevel};
                             results.append(result);
                         }
                     }
@@ -267,4 +276,153 @@ void FreqScannerSink::applySettings(const FreqScannerSettings& settings, const Q
     } else {
         m_settings.applySettings(settingsKeys, settings);
     }
+}
+
+// Voice activity detection for SSB signals
+// Detects voice by looking for formant-like structure (broad spectral peaks)
+// Returns a value from 0.0 (no voice) to 1.0 (strong voice signature)
+Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) const
+{
+    // Voice band in SSB is typically 100-3000 Hz from carrier
+    // We look for 2-4 formant peaks with bandwidth 50-200 Hz each
+
+    int startBin = bin - channelBins / 2 + 1;
+    int endBin = startBin + channelBins - 1;
+
+    if (startBin < 0 || endBin >= m_fftSize) {
+        return 0.0;
+    }
+
+    // Calculate bin bandwidth in Hz
+    float binBW = m_scannerSampleRate / (float)m_fftSize;
+
+    // For LSB, spectrum is reversed - flip the search direction
+    int step = isLSB ? -1 : 1;
+    int searchStart = isLSB ? endBin : startBin;
+    int searchEnd = isLSB ? startBin : endBin;
+
+    // Find peaks above noise floor
+    QVector<int> peakBins;
+    QVector<Real> peakMags;
+
+    // Calculate average noise floor
+    Real noiseFloor = 0.0;
+    int noiseCount = 0;
+    for (int i = startBin; i <= endBin; i++) {
+        noiseFloor += m_magSq[i];
+        noiseCount++;
+    }
+    noiseFloor = (noiseCount > 0) ? (noiseFloor / noiseCount) : 1e-12;
+    Real threshold = noiseFloor * 3.0; // 4.77 dB above noise
+
+    // Simple peak detection
+    int i = searchStart;
+    while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
+    {
+        if (m_magSq[i] > threshold)
+        {
+            // Found potential peak start
+            Real peakMag = m_magSq[i];
+            int peakBin = i;
+
+            // Find local maximum
+            i += step;
+            while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
+            {
+                if (m_magSq[i] > peakMag) {
+                    peakMag = m_magSq[i];
+                    peakBin = i;
+                    i += step;
+                } else if (m_magSq[i] > threshold) {
+                    i += step;
+                } else {
+                    break; // Peak ended
+                }
+            }
+
+            peakBins.append(peakBin);
+            peakMags.append(peakMag);
+        }
+        i += step;
+    }
+
+    if (peakBins.size() < 2) {
+        return 0.0; // Need at least 2 peaks for voice
+    }
+
+    // Measure peak bandwidths
+    int broadPeakCount = 0;
+    for (int p = 0; p < peakBins.size(); p++)
+    {
+        int peakBin = peakBins[p];
+        Real peakMag = peakMags[p];
+        Real halfPower = peakMag * 0.5; // 3dB point
+
+        // Measure bandwidth at half power (-3dB)
+        int bwCount = 1; // Peak bin itself
+
+        // Search left
+        for (int j = peakBin - 1; j >= startBin; j--) {
+            if (m_magSq[j] > halfPower) {
+                bwCount++;
+            } else {
+                break;
+            }
+        }
+
+        // Search right
+        for (int j = peakBin + 1; j <= endBin; j++) {
+            if (m_magSq[j] > halfPower) {
+                bwCount++;
+            } else {
+                break;
+            }
+        }
+
+        float bandwidth = bwCount * binBW;
+
+        // Voice formants are typically 50-200 Hz wide
+        // CW signals are <50 Hz wide
+        if (bandwidth >= 50.0 && bandwidth <= 200.0) {
+            broadPeakCount++;
+        }
+    }
+
+    // Check formant spacing (voice formants are typically 500-1500 Hz apart)
+    bool goodSpacing = false;
+    if (broadPeakCount >= 2 && peakBins.size() >= 2)
+    {
+        for (int p = 0; p < peakBins.size() - 1; p++)
+        {
+            int spacing = std::abs(peakBins[p + 1] - peakBins[p]);
+            float spacingHz = spacing * binBW;
+            if (spacingHz >= 400.0 && spacingHz <= 1800.0) {
+                goodSpacing = true;
+                break;
+            }
+        }
+    }
+
+    // Calculate voice activity score
+    // 2-4 broad peaks with good spacing = strong voice signature
+    float score = 0.0;
+
+    if (broadPeakCount >= 2)
+    {
+        // Base score from number of broad peaks
+        score = std::min(broadPeakCount / 4.0f, 1.0f);
+
+        // Boost if spacing is good
+        if (goodSpacing) {
+            score = std::min(score * 1.5f, 1.0f);
+        }
+
+        // Penalize if too many narrow peaks (likely CW or noise)
+        int narrowPeakCount = peakBins.size() - broadPeakCount;
+        if (narrowPeakCount > broadPeakCount) {
+            score *= 0.5;
+        }
+    }
+
+    return score;
 }

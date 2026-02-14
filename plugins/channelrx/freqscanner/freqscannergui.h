@@ -132,6 +132,8 @@ private slots:
     void on_retransmitTime_valueChanged(int value);
     void on_tuneTime_valueChanged(int value);
     void on_thresh_valueChanged(int value);
+    void on_voiceThreshold_valueChanged(int value);
+    void on_voiceSquelchType_currentIndexChanged(int index);
     void on_priority_currentIndexChanged(int index);
     void on_measurement_currentIndexChanged(int index);
     void on_mode_currentIndexChanged(int index);
