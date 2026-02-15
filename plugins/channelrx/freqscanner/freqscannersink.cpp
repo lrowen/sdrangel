@@ -495,6 +495,27 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
     if (broadPeakCount >= 2)
     {
+        // Check if signal is properly centered (not off-tune by 1 kHz or more)
+        // For correctly tuned voice, first formant (F1) should be 300-1000 Hz from carrier
+        // If mistuned by 1 kHz, F1 would appear at 1300-2000 Hz
+        int carrierBin = isLSB ? endBin : startBin;
+        bool hasLowFormant = false;
+
+        for (int p = 0; p < peakBins.size(); p++)
+        {
+            float freqOffset = std::abs(peakBins[p] - carrierBin) * binBW;
+            // Check if at least one broad peak is in F1 range (300-1000 Hz)
+            if (freqOffset >= 300.0 && freqOffset <= 1000.0) {
+                hasLowFormant = true;
+                break;
+            }
+        }
+
+        // If no formants in low range, signal is likely mistuned by >1 kHz
+        if (!hasLowFormant) {
+            return 0.0;
+        }
+
         // Base score from number of broad peaks
         score = std::min(broadPeakCount / 4.0f, 1.0f);
 
