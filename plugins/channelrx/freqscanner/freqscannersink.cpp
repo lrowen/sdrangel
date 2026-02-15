@@ -95,6 +95,51 @@ void FreqScannerSink::processOneSample(Complex &ci)
         // Perform FFT
         m_fft->transform();
 
+        // Accumulate voice activity levels on individual FFT (before averaging)
+        // This captures sharp formant structure better than averaged spectrum
+        int freqCount = m_settings.m_frequencySettings.size();
+        if (m_voiceLevelSum.size() != freqCount) {
+            m_voiceLevelSum.resize(freqCount);
+            m_voiceLevelCount.resize(freqCount);
+            m_voiceLevelSum.fill(0.0);
+            m_voiceLevelCount.fill(0);
+        }
+
+        for (int i = 0; i < freqCount; i++)
+        {
+            if (m_settings.m_frequencySettings[i].m_enabled)
+            {
+                qint64 frequency = m_settings.m_frequencySettings[i].m_frequency;
+                qint64 startFrequency = m_centerFrequency - m_scannerSampleRate / 2;
+                qint64 diff = frequency - startFrequency;
+                float binBW = m_scannerSampleRate / (float)m_fftSize;
+
+                if ((diff >= m_scannerSampleRate / 8) && (diff < m_scannerSampleRate * 7 / 8))
+                {
+                    int bin = std::round(diff / binBW);
+                    int channelBins;
+                    if (m_settings.m_frequencySettings[i].m_channelBandwidth.isEmpty()) {
+                        channelBins = m_binsPerChannel;
+                    } else {
+                        int channelBW = m_settings.getChannelBandwidth(&m_settings.m_frequencySettings[i]);
+                        channelBins = m_fftSize / (m_scannerSampleRate / (float)channelBW);
+                    }
+
+                    Real voiceLevel = 0.0;
+                    if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb) {
+                        voiceLevel = voiceActivityLevel(bin, channelBins, true);
+                    } else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) {
+                        voiceLevel = voiceActivityLevel(bin, channelBins, false);
+                    }
+
+                    if (voiceLevel > 0.0) {
+                        m_voiceLevelSum[i] += voiceLevel;
+                        m_voiceLevelCount[i]++;
+                    }
+                }
+            }
+        }
+
         // Reorder (so negative frequencies are first) and average
         int halfSize = m_fftSize / 2;
         for (int i = 0; i < halfSize; i++) {
@@ -147,12 +192,12 @@ void FreqScannerSink::processOneSample(Complex &ci)
                                 power = totalPower(bin, channelBins);
                             }
 
-                            // Calculate voice activity level if using voice trigger
+                            // Use averaged voice activity level from individual FFTs
                             Real voiceLevel = 0.0;
-                            if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb) {
-                                voiceLevel = voiceActivityLevel(bin, channelBins, true);
-                            } else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) {
-                                voiceLevel = voiceActivityLevel(bin, channelBins, false);
+                            if ((m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb ||
+                                 m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) &&
+                                m_voiceLevelCount[i] > 0) {
+                                voiceLevel = m_voiceLevelSum[i] / m_voiceLevelCount[i];
                             }
 
                             //qDebug() << "startFrequency:" << startFrequency << "m_scannerSampleRate:" << m_scannerSampleRate << "m_centerFrequency:" << m_centerFrequency << "frequency" << frequency << "bin" << bin << "power" << power << "voiceLevel" << voiceLevel;
@@ -165,6 +210,10 @@ void FreqScannerSink::processOneSample(Complex &ci)
             }
             m_averageCount = 0;
             m_fftStartTime = QDateTime::currentDateTime();
+
+            // Reset voice level accumulators for next averaging period
+            m_voiceLevelSum.fill(0.0);
+            m_voiceLevelCount.fill(0);
         }
         m_fftCounter = 0;
     }
@@ -216,6 +265,23 @@ Real FreqScannerSink::magSq(int bin) const
     return magsq;
 }
 
+// Compute magSq from raw FFT output with reordering (negative frequencies first)
+Real FreqScannerSink::magSqFromRawFFT(int bin) const
+{
+    // m_magSq is reordered: negative freqs first, then positive
+    // m_fft->out() is in standard FFT order: DC, positive freqs, negative freqs
+    int halfSize = m_fftSize / 2;
+    int fftBin;
+    if (bin < halfSize) {
+        // Negative frequencies: map to second half of FFT output
+        fftBin = bin + halfSize;
+    } else {
+        // Positive frequencies: map to first half of FFT output
+        fftBin = bin - halfSize;
+    }
+    return magSq(fftBin);
+}
+
 void FreqScannerSink::applyChannelSettings(int channelSampleRate, int channelFrequencyOffset, int scannerSampleRate, int fftSize, int binsPerChannel, bool force)
 {
     qDebug() << "FreqScannerSink::applyChannelSettings:"
@@ -252,6 +318,13 @@ void FreqScannerSink::applyChannelSettings(int channelSampleRate, int channelFre
         int averages = m_settings.m_scanTime * scannerSampleRate / 2 / fftSize;
         m_fftAverage.resize(fftSize, averages);
         m_magSq.resize(fftSize);
+
+        // Resize voice level accumulators to match frequency count
+        int freqCount = m_settings.m_frequencySettings.size();
+        m_voiceLevelSum.resize(freqCount);
+        m_voiceLevelCount.resize(freqCount);
+        m_voiceLevelSum.fill(0.0);
+        m_voiceLevelCount.fill(0);
     }
 
     m_channelSampleRate = channelSampleRate;
@@ -307,35 +380,37 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
     QVector<int> peakBins;
     QVector<Real> peakMags;
 
-    // Calculate average noise floor
+    // Calculate average noise floor from raw FFT
     Real noiseFloor = 0.0;
     int noiseCount = 0;
     for (int i = startBin; i <= endBin; i++) {
-        noiseFloor += m_magSq[i];
+        noiseFloor += magSqFromRawFFT(i);
         noiseCount++;
     }
     noiseFloor = (noiseCount > 0) ? (noiseFloor / noiseCount) : 1e-12;
     Real threshold = noiseFloor * 3.0; // 4.77 dB above noise
 
-    // Simple peak detection
+    // Simple peak detection using raw FFT data
     int i = searchStart;
     while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
     {
-        if (m_magSq[i] > threshold)
+        Real binMagSq = magSqFromRawFFT(i);
+        if (binMagSq > threshold)
         {
             // Found potential peak start
-            Real peakMag = m_magSq[i];
+            Real peakMag = binMagSq;
             int peakBin = i;
 
             // Find local maximum
             i += step;
             while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
             {
-                if (m_magSq[i] > peakMag) {
-                    peakMag = m_magSq[i];
+                Real nextMagSq = magSqFromRawFFT(i);
+                if (nextMagSq > peakMag) {
+                    peakMag = nextMagSq;
                     peakBin = i;
                     i += step;
-                } else if (m_magSq[i] > threshold) {
+                } else if (nextMagSq > threshold) {
                     i += step;
                 } else {
                     break; // Peak ended
@@ -374,7 +449,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
         // Search left
         for (int j = peakBin - 1; j >= startBin; j--) {
-            if (m_magSq[j] > halfPower) {
+            if (magSqFromRawFFT(j) > halfPower) {
                 bwCount++;
             } else {
                 break;
@@ -383,7 +458,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
         // Search right
         for (int j = peakBin + 1; j <= endBin; j++) {
-            if (m_magSq[j] > halfPower) {
+            if (magSqFromRawFFT(j) > halfPower) {
                 bwCount++;
             } else {
                 break;
