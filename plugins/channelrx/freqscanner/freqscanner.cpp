@@ -672,7 +672,13 @@ void FreqScanner::timeout()
 void FreqScanner::calcScannerSampleRate(int channelBW, int basebandSampleRate, int& scannerSampleRate, int& fftSize, int& binsPerChannel)
 {
     const int maxFFTSize = 16384;
-    const int minBinsPerChannel = 8;
+    int minBinsPerChannel = 8;
+
+    if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb
+        || m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
+    {
+        minBinsPerChannel = channelBW / 25; // 25Hz bins for voice activity detection
+    }
 
     // Base FFT size on that used for main spectrum
     std::vector<DeviceSet*>& deviceSets = MainCore::instance()->getDeviceSets();
