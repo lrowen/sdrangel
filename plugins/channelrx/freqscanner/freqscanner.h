@@ -146,6 +146,23 @@ public:
         }
     };
 
+    class MsgContinueScan : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+
+        static MsgContinueScan* create()
+        {
+            return new MsgContinueScan();
+        }
+
+    private:
+
+        MsgContinueScan() :
+            Message()
+        {
+        }
+    };
     class MsgScanResult : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -422,6 +439,7 @@ private:
     void startScan();
     void stopScan();
     void initScan();
+    void continueScan();
     void processScanResults(const QDateTime& fftStartTime, const QList<MsgScanResult::ScanResult>& results);
     void setDeviceCenterFrequency(qint64 frequency);
     void applyChannelSetting(const QString& channel);

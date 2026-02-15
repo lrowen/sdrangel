@@ -682,6 +682,12 @@ void FreqScannerGUI::on_startStop_toggled(bool checked)
     }
 }
 
+void FreqScannerGUI::on_continueScan_clicked()
+{
+    FreqScanner::MsgContinueScan* message = FreqScanner::MsgContinueScan::create();
+    m_freqScanner->getInputMessageQueue()->push(message);
+}
+
 void FreqScannerGUI::addRow(const FreqScannerSettings::FrequencySettings& frequencySettings)
 {
     int row = ui->table->rowCount();
@@ -1278,6 +1284,7 @@ void FreqScannerGUI::makeUIConnections()
     QObject::connect(ui->measurement, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_measurement_currentIndexChanged);
     QObject::connect(ui->mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_mode_currentIndexChanged);
     QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &FreqScannerGUI::on_startStop_toggled);
+    QObject::connect(ui->continueScan, &QPushButton::clicked, this, &FreqScannerGUI::on_continueScan_clicked);
     QObject::connect(ui->table, &QTableWidget::cellChanged, this, &FreqScannerGUI::on_table_cellChanged);
     QObject::connect(ui->addSingle, &QToolButton::clicked, this, &FreqScannerGUI::on_addSingle_clicked);
     QObject::connect(ui->addRange, &QToolButton::clicked, this, &FreqScannerGUI::on_addRange_clicked);

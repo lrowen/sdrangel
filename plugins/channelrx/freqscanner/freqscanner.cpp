@@ -49,6 +49,7 @@ MESSAGE_CLASS_DEFINITION(FreqScanner::MsgReportChannels, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgStartScan, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgStopScan, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgScanComplete, Message)
+MESSAGE_CLASS_DEFINITION(FreqScanner::MsgContinueScan, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgScanResult, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgStatus, Message)
 MESSAGE_CLASS_DEFINITION(FreqScanner::MsgReportActiveFrequency, Message)
@@ -261,6 +262,12 @@ bool FreqScanner::handleMessage(const Message& cmd)
 
         return true;
     }
+    else if (MsgContinueScan::match(cmd))
+    {
+        continueScan();
+
+        return true;
+    }
     else
     {
         return false;
@@ -317,6 +324,11 @@ void FreqScanner::initScan()
         m_guiMessageQueue->push(FreqScanner::MsgReportScanning::create());
     }
 
+    m_state = SCAN_FOR_MAX_POWER;
+}
+
+void FreqScanner::continueScan()
+{
     m_state = SCAN_FOR_MAX_POWER;
 }
 
