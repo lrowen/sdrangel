@@ -495,24 +495,50 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
     if (broadPeakCount >= 2)
     {
-        // Check if signal is properly centered (not off-tune by 1 kHz or more)
-        // For correctly tuned voice, first formant (F1) should be 300-1000 Hz from carrier
-        // If mistuned by 1 kHz, F1 would appear at 1300-2000 Hz
+        // Detect fundamental frequency (f0) by looking for harmonic structure
+        // Voice has harmonics at f0, 2*f0, 3*f0, etc. with formants modulating them
+        // Typical f0: male 85-180 Hz, female 165-255 Hz
         int carrierBin = isLSB ? endBin : startBin;
-        bool hasLowFormant = false;
 
-        for (int p = 0; p < peakBins.size(); p++)
+        // Try different f0 candidates in typical voice range (80-300 Hz)
+        int maxHarmonics = 0;
+
+        for (int f0Hz = 80; f0Hz <= 300; f0Hz += 10)
         {
-            float freqOffset = std::abs(peakBins[p] - carrierBin) * binBW;
-            // Check if at least one broad peak is in F1 range (300-1000 Hz)
-            if (freqOffset >= 300.0 && freqOffset <= 1000.0) {
-                hasLowFormant = true;
-                break;
+            int f0Bins = (int)(f0Hz / binBW);
+            int harmonicCount = 0;
+
+            // Check for harmonics up to 3000 Hz (SSB bandwidth limit)
+            for (int h = 1; h <= 10; h++)
+            {
+                int harmonicBin = carrierBin + (isLSB ? -1 : 1) * (h * f0Bins);
+
+                // Check if any detected peak is near this harmonic (within ±30 Hz tolerance)
+                int tolerance = (int)(30.0 / binBW);
+                for (int p = 0; p < peakBins.size(); p++)
+                {
+                    if (std::abs(peakBins[p] - harmonicBin) <= tolerance)
+                    {
+                        harmonicCount++;
+                        break;
+                    }
+                }
+
+                // Stop checking beyond 3 kHz
+                if (h * f0Hz > 3000) {
+                    break;
+                }
+            }
+
+            if (harmonicCount > maxHarmonics)
+            {
+                maxHarmonics = harmonicCount;
             }
         }
 
-        // If no formants in low range, signal is likely mistuned by >1 kHz
-        if (!hasLowFormant) {
+        // Need at least 3 harmonics aligned to confirm voice pitch structure
+        // If mistuned by 1 kHz, formants won't align with any harmonic series
+        if (maxHarmonics < 3) {
             return 0.0;
         }
 
@@ -522,6 +548,11 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
         // Boost if spacing is good
         if (goodSpacing) {
             score = std::min(score * 1.5f, 1.0f);
+        }
+
+        // Boost if strong harmonic structure (4+ harmonics)
+        if (maxHarmonics >= 4) {
+            score = std::min(score * 1.2f, 1.0f);
         }
 
         // Penalize if too many narrow peaks (likely CW or noise)
