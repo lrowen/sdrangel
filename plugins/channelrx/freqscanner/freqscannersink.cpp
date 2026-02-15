@@ -124,8 +124,10 @@ void FreqScannerSink::processOneSample(Complex &ci)
                         // Ignore results in upper and lower 12.5%, as there may be aliasing here from half-band filters
                         if ((diff >= m_scannerSampleRate / 8) && (diff < m_scannerSampleRate * 7 / 8))
                         {
-                            int bin = std::round(diff / binBW);
-                            int channelBins;
+                            int bin = std::round(diff / binBW); // Bin corresponding to the frequency
+                            int channelBins; // Number of bins in the channel containing the frequency.
+                                             // This is either the default (m_binsPerChannel)
+                                             // or calculated based on the channel bandwidth if specified in settings for this frequency
 
                             if (m_settings.m_frequencySettings[i].m_channelBandwidth.isEmpty())
                             {

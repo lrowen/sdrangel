@@ -677,7 +677,10 @@ void FreqScanner::calcScannerSampleRate(int channelBW, int basebandSampleRate, i
     if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb
         || m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
     {
-        minBinsPerChannel = channelBW / 25; // 25Hz bins for voice activity detection
+        scannerSampleRate = 48000; // Use 48kHz sample rate for voice squelch, to give better resolution at low bandwidths
+        fftSize = 2048; // Use 2048 FFT size for voice squelch, to give better resolution at low bandwidths
+        binsPerChannel = fftSize / (scannerSampleRate / (float)channelBW); // 128 for typical channel bandwidth of 3000Hz
+        return;
     }
 
     // Base FFT size on that used for main spectrum
