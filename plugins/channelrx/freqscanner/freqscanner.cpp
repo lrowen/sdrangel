@@ -620,7 +620,7 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                 // Wait until power drops below threshold
                 FreqScannerSettings::FrequencySettings *frequencySettings = m_settings.getFrequencySettings(m_activeFrequency);
                 Real threshold = m_settings.getThreshold(frequencySettings);
-                if (results[i].m_power < threshold)
+                if (results[i].m_power < threshold) 
                 {
                     m_timeoutTimer.setSingleShot(true);
                     m_timeoutTimer.start((int)(m_settings.m_retransmitTime * 1000.0));
@@ -643,8 +643,10 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                 // Check if power has returned to being above threshold
                 FreqScannerSettings::FrequencySettings *frequencySettings = m_settings.getFrequencySettings(m_activeFrequency);
                 Real threshold = m_settings.getThreshold(frequencySettings);
-                if (results[i].m_power >= threshold)
+                if ((results[i].m_power >= threshold) 
+                && checkVoiceThreshold(m_settings.m_voiceSquelchType, results[i].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
                 {
+                    qDebug("FreqScanner::processScanResults: WAIT_FOR_RETRANSMISSION restart: voice score: %f", results[i].m_voiceActivityLevel);
                     m_timeoutTimer.stop();
                     m_state = WAIT_FOR_END_TX;
                 }
@@ -689,10 +691,7 @@ void FreqScanner::calcScannerSampleRate(int channelBW, int basebandSampleRate, i
     if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb
         || m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
     {
-        scannerSampleRate = 48000; // Use 48kHz sample rate for voice squelch, to give better resolution at low bandwidths
-        fftSize = 2048; // Use 2048 FFT size for voice squelch, to give better resolution at low bandwidths
-        binsPerChannel = fftSize / (scannerSampleRate / (float)channelBW); // 128 for typical channel bandwidth of 3000Hz
-        return;
+        minBinsPerChannel = channelBW / 20; // we want at most 20 Hz per bin
     }
 
     // Base FFT size on that used for main spectrum
