@@ -342,8 +342,17 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
                 }
             }
 
-            peakBins.append(peakBin);
-            peakMags.append(peakMag);
+            // Calculate frequency offset from carrier
+            // For USB: carrier is at startBin, voice extends upward
+            // For LSB: carrier is at endBin, voice extends downward
+            int carrierBin = isLSB ? endBin : startBin;
+            float freqOffset = std::abs(peakBin - carrierBin) * binBW;
+
+            // Only include peaks within SSB voice bandwidth (0-3000 Hz from carrier)
+            if (freqOffset <= 3000.0) {
+                peakBins.append(peakBin);
+                peakMags.append(peakMag);
+            }
         }
         i += step;
     }
