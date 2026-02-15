@@ -29,7 +29,8 @@ MESSAGE_CLASS_DEFINITION(FreqScannerBaseband::MsgConfigureFreqScannerBaseband, M
 
 FreqScannerBaseband::FreqScannerBaseband(FreqScanner *freqScanner) :
     m_freqScanner(freqScanner),
-    m_messageQueueToGUI(nullptr)
+    m_messageQueueToGUI(nullptr),
+    m_currentBasebandSampleRate(0)
 {
     qDebug("FreqScannerBaseband::FreqScannerBaseband");
 
@@ -62,6 +63,7 @@ void FreqScannerBaseband::reset()
     m_inputMessageQueue.clear();
     m_sampleFifo.reset();
     m_channelSampleRate = 0;
+    m_currentBasebandSampleRate = 0;
 }
 
 void FreqScannerBaseband::setChannel(ChannelAPI *channel)
@@ -130,11 +132,18 @@ bool FreqScannerBaseband::handleMessage(const Message& cmd)
         QMutexLocker mutexLocker(&m_mutex);
         DSPSignalNotification& notif = (DSPSignalNotification&) cmd;
         qDebug() << "FreqScannerBaseband::handleMessage: DSPSignalNotification: basebandSampleRate: " << notif.getSampleRate();
-        setBasebandSampleRate(notif.getSampleRate());
-        m_sampleFifo.setSize(SampleSinkFifo::getSizePolicy(notif.getSampleRate()));
-        if (m_channelSampleRate != m_channelizer->getChannelSampleRate()) {
-            m_channelSampleRate = m_channelizer->getChannelSampleRate();
+        int basebandSampleRate = notif.getSampleRate();
+        
+        if (basebandSampleRate != m_currentBasebandSampleRate)
+        {
+            setBasebandSampleRate(notif.getSampleRate());
+            m_sampleFifo.setSize(SampleSinkFifo::getSizePolicy(notif.getSampleRate()));
+            if (m_channelSampleRate != m_channelizer->getChannelSampleRate()) {
+                m_channelSampleRate = m_channelizer->getChannelSampleRate();
+            }
+            m_currentBasebandSampleRate = basebandSampleRate;
         }
+
         m_sink.setCenterFrequency(notif.getCenterFrequency());
 
         return true;

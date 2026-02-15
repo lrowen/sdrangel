@@ -86,6 +86,7 @@ private:
     MessageQueue *m_messageQueueToGUI;
     FreqScannerSettings m_settings;
     QRecursiveMutex m_mutex;
+    int m_currentBasebandSampleRate;
 
     bool handleMessage(const Message& cmd);
     void applySettings(const FreqScannerSettings& settings, const QStringList& settingsKeys, bool force = false);
