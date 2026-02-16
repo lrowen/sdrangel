@@ -555,10 +555,16 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
             score = std::min(score * 1.2f, 1.0f);
         }
 
-        // Penalize if too many narrow peaks (likely CW or noise)
-        int narrowPeakCount = peakBins.size() - broadPeakCount;
-        if (narrowPeakCount > broadPeakCount) {
-            score *= 0.5;
+        // Penalize if too many narrow peaks (likely CW or noise) 
+        // => This condition is ALWAYS true as there are always many more peaks than broad peaks
+        // int narrowPeakCount = peakBins.size() - broadPeakCount;
+        // if (narrowPeakCount > broadPeakCount) {
+        //     score *= 0.5;
+        // }
+
+        // Just strongly penalize if there are no broad peaks at all
+        if (broadPeakCount == 0) {
+            score *= 0.1;
         }
     }
 
