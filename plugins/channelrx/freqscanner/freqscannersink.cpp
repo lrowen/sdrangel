@@ -18,6 +18,11 @@
 #include <QDebug>
 
 #include <complex.h>
+#include <cmath>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 #include "dsp/dspengine.h"
 #include "dsp/fftfactory.h"
@@ -113,7 +118,17 @@ void FreqScannerSink::processOneSample(Complex &ci)
                 qint64 startFrequency = m_centerFrequency - m_scannerSampleRate / 2;
                 qint64 diff = frequency - startFrequency;
                 float binBW = m_scannerSampleRate / (float)m_fftSize;
+                // qDebug() << "FreqScannerSink::processOneSample:" 
+                //     << "startFrequency" << startFrequency
+                //     << "m_scannerSampleRate" << m_scannerSampleRate
+                //     << "m_centerFrequency" << m_centerFrequency
+                //     << "m_fftSize" << m_fftSize
+                //     << "frequency" << frequency 
+                //     << "diff" << diff 
+                //     << "binBW" << binBW
+                //     << "m_binsPerChannel" << m_binsPerChannel;
 
+                // avoid spectrum edges where there may be aliasing from half-band filters
                 if ((diff >= m_scannerSampleRate / 8) && (diff < m_scannerSampleRate * 7 / 8))
                 {
                     int bin = std::round(diff / binBW);
@@ -127,9 +142,9 @@ void FreqScannerSink::processOneSample(Complex &ci)
 
                     Real voiceLevel = 0.0;
                     if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb) {
-                        voiceLevel = voiceActivityLevel(bin, channelBins, true);
+                        voiceLevel = voiceActivityLevel(frequency, bin, channelBins, true);
                     } else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) {
-                        voiceLevel = voiceActivityLevel(bin, channelBins, false);
+                        voiceLevel = voiceActivityLevel(frequency, bin, channelBins, false);
                     }
 
                     if (voiceLevel > 0.0) {
@@ -282,6 +297,83 @@ Real FreqScannerSink::magSqFromRawFFT(int bin) const
     return magSq(fftBin);
 }
 
+// Compute formant envelope using log-domain spectral smoothing
+// This separates vocal tract resonances (formants) from pitch harmonics
+void FreqScannerSink::getFormantEnvelope(int startBin, int endBin, QVector<Real>& envelope) const
+{
+    if (startBin < 0 || endBin >= m_fftSize || startBin > endBin) {
+        envelope.clear();
+        return;
+    }
+
+    int numBins = endBin - startBin + 1;
+    envelope.resize(numBins);
+
+    // Step 1: Compute log magnitude spectrum
+    QVector<Real> logMag(numBins);
+    Real minLog = -10.0; // Floor to avoid log(0)
+    
+    for (int i = 0; i < numBins; i++)
+    {
+        Real magSq = magSqFromRawFFT(startBin + i);
+        Real mag = std::sqrt(std::max(magSq, (Real)1e-12));
+        logMag[i] = std::log(mag);
+        if (logMag[i] < minLog) {
+            logMag[i] = minLog;
+        }
+    }
+
+    // Step 2: Apply smoothing in log domain to extract formant envelope
+    // This removes rapid variations (pitch harmonics) while keeping slow variations (formants)
+    // Use moving average filter with window size based on expected harmonic spacing
+    
+    float binBW = m_scannerSampleRate / (float)m_fftSize;
+    
+    // For formant detection, smooth over approximately 200-300 Hz
+    // This is wider than typical harmonic spacing (80-300 Hz) but narrower than formant bandwidth
+    float smoothingBandwidthHz = 250.0; // Hz
+    int smoothingWindow = std::max(3, (int)(smoothingBandwidthHz / binBW));
+    
+    // Make smoothing window odd for symmetry
+    if (smoothingWindow % 2 == 0) {
+        smoothingWindow++;
+    }
+    
+    int halfWindow = smoothingWindow / 2;
+    
+    // qDebug() << "FreqScannerSink::getFormantEnvelope smoothingWindow:" << smoothingWindow 
+    //          << "bins (" << (smoothingWindow * binBW) << "Hz)";
+
+    // Apply moving average smoothing
+    QVector<Real> smoothedLog(numBins);
+    for (int i = 0; i < numBins; i++)
+    {
+        Real sum = 0.0;
+        int count = 0;
+        
+        for (int j = -halfWindow; j <= halfWindow; j++)
+        {
+            int idx = i + j;
+            if (idx >= 0 && idx < numBins) {
+                sum += logMag[idx];
+                count++;
+            }
+        }
+        
+        smoothedLog[i] = (count > 0) ? (sum / count) : logMag[i];
+    }
+
+    // Step 3: Convert back to linear magnitude
+    for (int i = 0; i < numBins; i++)
+    {
+        envelope[i] = std::exp(smoothedLog[i]);
+    }
+    
+    // Debug: print first few envelope values
+    // qDebug() << "FreqScannerSink::getFormantEnvelope first 10 envelope values:" 
+    //          << envelope.mid(0, std::min(10, numBins));
+}
+
 void FreqScannerSink::applyChannelSettings(int channelSampleRate, int channelFrequencyOffset, int scannerSampleRate, int fftSize, int binsPerChannel, bool force)
 {
     qDebug() << "FreqScannerSink::applyChannelSettings:"
@@ -354,12 +446,12 @@ void FreqScannerSink::applySettings(const FreqScannerSettings& settings, const Q
 }
 
 // Voice activity detection for SSB signals
-// Detects voice by looking for formant-like structure (broad spectral peaks)
+// Detects voice by looking for formant-like structure using spectral smoothing
 // Returns a value from 0.0 (no voice) to 1.0 (strong voice signature)
-Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) const
+Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, bool isLSB) const
 {
     // Voice band in SSB is typically 100-3000 Hz from carrier
-    // We look for 2-4 formant peaks with bandwidth 50-200 Hz each
+    // We look for 2-4 formant peaks in the smoothed spectral envelope
 
     int startBin = bin - channelBins / 2 + 1;
     int endBin = startBin + channelBins - 1;
@@ -372,244 +464,243 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
     float binBW = m_scannerSampleRate / (float)m_fftSize;
 
     // For LSB, spectrum is reversed - flip the search direction
-    int step = isLSB ? -1 : 1;
-    int searchStart = isLSB ? endBin : startBin;
-    int searchEnd = isLSB ? startBin : endBin;
+    int carrierBin = isLSB ? endBin : startBin;
 
-    // Find peaks above noise floor
-    QVector<int> peakBins;
-    QVector<int> broadPeakBins;
-    QVector<Real> peakMags;
+    // Get formant envelope using spectral smoothing
+    // This separates vocal tract resonances from pitch harmonics
+    QVector<Real> formantEnvelope;
+    getFormantEnvelope(startBin, endBin, formantEnvelope);
 
-    // Calculate average noise floor from raw FFT
+    if (formantEnvelope.isEmpty()) {
+        qDebug() << "FreqScannerSink::voiceActivityLevel formantEnvelope is empty!";
+        return 0.0;
+    }
+
+    // Calculate noise floor from formant envelope
     Real noiseFloor = 0.0;
-    int noiseCount = 0;
-    for (int i = startBin; i <= endBin; i++) {
-        noiseFloor += magSqFromRawFFT(i);
-        noiseCount++;
+    Real maxEnv = 0.0;
+    for (int i = 0; i < formantEnvelope.size(); i++) {
+        noiseFloor += formantEnvelope[i];
+        maxEnv = std::max(maxEnv, formantEnvelope[i]);
     }
-    noiseFloor = (noiseCount > 0) ? (noiseFloor / noiseCount) : 1e-12;
-    Real threshold = noiseFloor * 3.0; // 4.77 dB above noise
+    noiseFloor = formantEnvelope.size() > 0 ? noiseFloor / formantEnvelope.size() : 1e-12;
+    
+    // For voice, we need reasonably high peaks relative to noise
+    // Use 4 dB (2.5x) above average as threshold for peak detection
+    // Additional validation: peak-to-noise ratio
+    // If max is not sufficiently higher than average, signal quality is poor
+    float peakToNoiseRatio = maxEnv / noiseFloor;
+    // qDebug() << "FreqScannerSink::voiceActivityLevel: noiseFloor:" << noiseFloor 
+    //          << "maxEnv:" << maxEnv << "peak-to-noise ratio:" << peakToNoiseRatio;
+    
+    // Lower threshold: require at least 1.2x peak-to-noise ratio (only ~1.6dB)
+    // After heavy smoothing, formants appear as gentle bumps, not sharp peaks
+    if (peakToNoiseRatio < 1.2) {
+        // Signal is essentially all noise
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Rejected - insufficient signal (peak-to-noise:" << peakToNoiseRatio << ")";
+        return 0.0;
+    }
+    
+    // For peak detection, use much lower threshold since smoothed spectral peaks are gentle
+    // Use 1.1x noise floor to catch formant peaks in the smoothed envelope
+    Real threshold = noiseFloor * 1.1;
 
-    // Simple peak detection using raw FFT data
-    int i = searchStart;
-    while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
+    // Find formant peaks in the smoothed envelope
+    QVector<int> formantBins;
+    QVector<Real> formantMags;
+
+    // Simple peak detection in formant envelope
+    for (int i = 1; i < formantEnvelope.size() - 1; i++)
     {
-        Real binMagSq = magSqFromRawFFT(i);
-        if (binMagSq > threshold)
-        {
-            // Found potential peak start
-            Real peakMag = binMagSq;
-            int peakBin = i;
+        Real prev = formantEnvelope[i - 1];
+        Real curr = formantEnvelope[i];
+        Real next = formantEnvelope[i + 1];
 
-            // Find local maximum
-            i += step;
-            while ((isLSB && i >= searchEnd) || (!isLSB && i <= searchEnd))
+        // Local maximum above threshold
+        if (curr > prev && curr > next && curr > threshold)
+        {
+            int absBin = startBin + i;
+            float freqOffset = std::abs(absBin - carrierBin) * binBW;
+
+            // Only include peaks within SSB voice bandwidth (100-3000 Hz from carrier)
+            if (freqOffset >= 100.0 && freqOffset <= 3000.0)
             {
-                Real nextMagSq = magSqFromRawFFT(i);
-                if (nextMagSq > peakMag) {
-                    peakMag = nextMagSq;
-                    peakBin = i;
-                    i += step;
-                } else if (nextMagSq > threshold) {
-                    i += step;
-                } else {
-                    break; // Peak ended
-                }
-            }
-
-            // Calculate frequency offset from carrier
-            // For USB: carrier is at startBin, voice extends upward
-            // For LSB: carrier is at endBin, voice extends downward
-            int carrierBin = isLSB ? endBin : startBin;
-            float freqOffset = std::abs(peakBin - carrierBin) * binBW;
-
-            // Only include peaks within SSB voice bandwidth (0-3000 Hz from carrier)
-            if (freqOffset <= 3000.0) {
-                peakBins.append(peakBin);
-                peakMags.append(peakMag);
+                formantBins.append(absBin);
+                formantMags.append(curr);
             }
         }
-        i += step;
     }
 
-    if (peakBins.size() < 2) {
-        return 0.0; // Need at least 2 peaks for voice
+    // Voice requires 2-4 formants
+    if (formantBins.size() < 2) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Not enough peaks detected" << formantBins.size();
+        return 0.0;
     }
-
-    // Measure peak bandwidths
-    int broadPeakCount = 0;
-    for (int p = 0; p < peakBins.size(); p++)
+    
+    // qDebug() << "FreqScannerSink::voiceActivityLevel: Detected" << formantBins.size() << "peaks above threshold";
+    
+    // Sort formants by frequency offset (not bin order) to handle LSB reversal
+    QVector<float> formantFreqs;
+    QVector<int> formantIndices;
+    
+    for (int i = 0; i < formantBins.size(); i++)
     {
-        int peakBin = peakBins[p];
-        Real peakMag = peakMags[p];
-        Real halfPower = peakMag * 0.5; // 3dB point
-
-        // Measure bandwidth at half power (-3dB)
-        int bwCount = 1; // Peak bin itself
-
-        // Search left
-        for (int j = peakBin - 1; j >= startBin; j--) {
-            if (magSqFromRawFFT(j) > halfPower) {
-                bwCount++;
-            } else {
-                break;
-            }
-        }
-
-        // Search right
-        for (int j = peakBin + 1; j <= endBin; j++) {
-            if (magSqFromRawFFT(j) > halfPower) {
-                bwCount++;
-            } else {
-                break;
-            }
-        }
-
-        float bandwidth = bwCount * binBW;
-
-        // Voice formants are typically 50-200 Hz wide
-        // CW signals are <50 Hz wide
-        if (bandwidth >= 50.0 && bandwidth <= 200.0)
+        float freqOffset = std::abs(formantBins[i] - carrierBin) * binBW;
+        formantFreqs.append(freqOffset);
+        formantIndices.append(i);
+    }
+    
+    // Simple insertion sort by frequency
+    for (int i = 1; i < formantFreqs.size(); i++)
+    {
+        for (int j = i; j > 0 && formantFreqs[j] < formantFreqs[j - 1]; j--)
         {
-            broadPeakBins.append(peakBin);
-            broadPeakCount++;
+            std::swap(formantFreqs[j], formantFreqs[j - 1]);
+            std::swap(formantIndices[j], formantIndices[j - 1]);
         }
     }
+    
+    // Merge peaks that are too close together (within 400 Hz)
+    // Real formants have minimum separation of 400-500 Hz in SSB voice
+    // So anything closer is ripple within a single formant
+    // We keep the peak with highest magnitude and remove others
+    QVector<float> mergedFormantFreqs;
+    QVector<int> mergedFormantIndices;
+    
+    const float minFormantSpacing = 400.0; // Hz - minimum spacing between real formants
+    
+    for (int i = 0; i < formantFreqs.size(); i++)
+    {
+        if (i == 0 || formantFreqs[i] - mergedFormantFreqs.back() >= minFormantSpacing)
+        {
+            // This is a new formant (far enough from previous)
+            mergedFormantFreqs.append(formantFreqs[i]);
+            mergedFormantIndices.append(formantIndices[i]);
+        }
+        else
+        {
+            // This peak is too close to the previous one - merge by keeping highest magnitude
+            int prevIdx = mergedFormantIndices.back();
+            int currIdx = formantIndices[i];
+            if (formantMags[currIdx] > formantMags[prevIdx])
+            {
+                // Replace with higher magnitude peak
+                mergedFormantFreqs.back() = formantFreqs[i];
+                mergedFormantIndices.back() = currIdx;
+            }
+        }
+    }
+    
+    formantFreqs = mergedFormantFreqs;
+    formantIndices = mergedFormantIndices;
+    
+    // qDebug() << "FreqScannerSink::voiceActivityLevel: Merged to" << formantFreqs.size() << "formants:" << formantFreqs;
+    
+    // After merging, we should still have at least 2 formants for voice
+    if (formantFreqs.size() < 2) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Not enough formants after merging";
+        return 0.0;
+    }
 
-    // Check formant spacing (voice formants are typically 500-1500 Hz apart)
+    // Check formant spacing (voice formants should be 400-1500 Hz apart)
+    // F1-F2 spacing is typically 600-1200 Hz
     bool goodSpacing = false;
-    if (broadPeakCount >= 2)
+    for (int i = 0; i < formantFreqs.size() - 1; i++)
     {
-        for (int p = 0; p < broadPeakBins.size() - 1; p++)
-        {
-            int spacing = std::abs(broadPeakBins[p + 1] - broadPeakBins[p]);
-            float spacingHz = spacing * binBW;
-            if (spacingHz >= 400.0 && spacingHz <= 1100.0) {
-                goodSpacing = true;
-                break;
-            }
+        float spacing = formantFreqs[i + 1] - formantFreqs[i];
+        if (spacing >= 400.0 && spacing <= 1500.0) {
+            goodSpacing = true;
+            break;
         }
     }
 
-    // Calculate voice activity score
-    // 2-4 broad peaks with good spacing = strong voice signature
+    if (!goodSpacing) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Bad formant spacing" << formantFreqs;
+        return 0.0; // Formants too close or too far apart
+    }
+
+    // Check for F1 formant in expected range (300-1000 Hz from carrier)
+    // This is critical for voice detection
+    // F1 should be the lowest frequency formant
+    bool hasF1 = false;
+    Real f1Mag = 0.0;
+    int f1Idx = -1;
+    
+    if (formantFreqs.size() > 0 && formantFreqs[0] >= 300.0 && formantFreqs[0] <= 1000.0)
+    {
+        hasF1 = true;
+        f1Idx = formantIndices[0];
+        f1Mag = formantMags[f1Idx];
+    }
+
+    if (!hasF1) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: No valid F1 formant, lowest freq:" << (formantFreqs.size() > 0 ? formantFreqs[0] : -1);
+        return 0.0; // No F1 formant - not voice or mistuned
+    }
+
+    // Check for F2 formant in expected range (900-2500 Hz from carrier)
+    // F2 should be higher frequency than F1 AND 400-1500 Hz away from F1
+    bool hasF2 = false;
+    Real f2Mag = 0.0;
+    int f2Idx = -1;
+    float f2Freq = 0.0;
+    
+    for (int i = 1; i < formantFreqs.size(); i++)
+    {
+        float freqOffset = formantFreqs[i];
+        float f1ToF2Spacing = freqOffset - formantFreqs[0];
+        
+        // F2 must be: in range, higher than F1, and properly spaced from F1
+        if (freqOffset >= 900.0 && freqOffset <= 2500.0 && 
+            f1ToF2Spacing >= 400.0 && f1ToF2Spacing <= 1500.0)
+        {
+            hasF2 = true;
+            f2Idx = formantIndices[i];
+            f2Freq = freqOffset;
+            f2Mag = formantMags[f2Idx];
+            break; // Take the first valid F2
+        }
+    }
+
+    if (!hasF2) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: No valid F2 formant, candidates not in range/spacing";
+        return 0.0; // No F2 formant - not voice or mistuned
+    }
+
+    // Calculate voice activity score based on formant characteristics
+    // Voice is indicated by presence of F1 and F2 formants - this is the primary voice signature
+    // Harmonics are less reliable in SSB due to spectral properties and noise
     float score = 0.0;
 
-    if (broadPeakCount >= 2)
-    {
-        // Detect fundamental frequency (f0) by looking for harmonic structure
-        // Voice has harmonics at f0, 2*f0, 3*f0, etc. with formants modulating them
-        // Typical f0: male 85-180 Hz, female 165-255 Hz
-        int carrierBin = isLSB ? endBin : startBin;
+    // Base score from number of formants (2-4 formants typical for voice)
+    // Formants are the most reliable voice indicator
+    // Use merged formant count, not raw peak count
+    float formantScore = std::min(formantFreqs.size() / 3.0f, 1.0f);
+    score += formantScore * 0.6; // 60% weight
 
-        // Try different f0 candidates in typical voice range (80-300 Hz)
-        int maxHarmonics = 0;
-        int bestF0Hz = 0;
+    // Score from formant magnitude (strong formants = strong voice)
+    // Higher magnitudes indicate clearer voice detection
+    // Make this threshold appropriately high to prefer strong signals
+    float magnitudeScore = std::min((float)(f1Mag + f2Mag) / (float)(noiseFloor * 6.0), 1.0f);
+    score += magnitudeScore * 0.4; // 40% weight
 
-        for (int f0Hz = 80; f0Hz <= 300; f0Hz += 10)
-        {
-            int f0Bins = (int)(f0Hz / binBW);
-            int harmonicCount = 0;
+    // Clamp to [0, 1]
+    score = std::max(0.0f, std::min(score, 1.0f));
 
-            // Check for harmonics up to 3000 Hz (SSB bandwidth limit)
-            for (int h = 1; h <= 10; h++)
-            {
-                int harmonicBin = carrierBin + (isLSB ? -1 : 1) * (h * f0Bins);
-
-                // Check if any detected peak is near this harmonic (within ±30 Hz tolerance)
-                int tolerance = (int)(30.0 / binBW);
-                for (int p = 0; p < peakBins.size(); p++)
-                {
-                    if (std::abs(peakBins[p] - harmonicBin) <= tolerance)
-                    {
-                        harmonicCount++;
-                        break;
-                    }
-                }
-
-                // Stop checking beyond 3 kHz
-                if (h * f0Hz > 3000) {
-                    break;
-                }
-            }
-
-            if (harmonicCount > maxHarmonics)
-            {
-                maxHarmonics = harmonicCount;
-                bestF0Hz = f0Hz;
-            }
-        }
-
-        // Need at least 3 harmonics aligned to confirm voice pitch structure
-        // If mistuned by 1 kHz, formants won't align with any harmonic series
-        if (maxHarmonics < 3) {
-            return 0.0;
-        }
-
-        // Check if first harmonic (f0) is actually present at low frequency
-        // When tuned correctly, f0 should be 80-300 Hz from carrier
-        int f0Bins = (int)(bestF0Hz / binBW);
-        int firstHarmonicBin = carrierBin + (isLSB ? -1 : 1) * f0Bins;
-        int tolerance = (int)(30.0 / binBW);
-
-        bool hasF0 = false;
-        for (int p = 0; p < peakBins.size(); p++)
-        {
-            if (std::abs(peakBins[p] - firstHarmonicBin) <= tolerance)
-            {
-                hasF0 = true;
-                break;
-            }
-        }
-
-        // If no peak near fundamental frequency, signal is mistuned
-        // (harmonics may still align but they're higher harmonics of wrong pitch)
-        if (!hasF0) {
-            return 0.0;
-        }
-
-        // Verify at least one broad formant in F1 range (300-1000 Hz from carrier)
-        // This catches low-tuning errors where harmonics might still align
-        bool hasF1 = false;
-        for (int p = 0; p < broadPeakBins.size(); p++)
-        {
-            float freqOffset = std::abs(broadPeakBins[p] - carrierBin) * binBW;
-            if (freqOffset >= 300.0 && freqOffset <= 1000.0) {
-                hasF1 = true;
-                break;
-            }
-        }
-
-        if (!hasF1) {
-            return 0.0; // No F1 formant - signal is mistuned
-        }
-
-        // Base score from number of broad peaks
-        score = std::min(broadPeakCount / 4.0f, 1.0f);
-
-        // Boost if spacing is good
-        if (goodSpacing) {
-            score = std::min(score * 1.5f, 1.0f);
-        }
-
-        // Boost if strong harmonic structure (4+ harmonics)
-        if (maxHarmonics >= 4) {
-            score = std::min(score * 1.2f, 1.0f);
-        }
-
-        // Penalize if too many narrow peaks (likely CW or noise)
-        // => This condition is ALWAYS true as there are always many more peaks than broad peaks
-        // int narrowPeakCount = peakBins.size() - broadPeakCount;
-        // if (narrowPeakCount > broadPeakCount) {
-        //     score *= 0.5;
-        // }
-
-        // Just strongly penalize if there are no broad peaks at all
-        if (broadPeakCount == 0) {
-            score *= 0.1;
-        }
+    if (score > m_settings.m_voiceSquelchThreshold) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel Sorted formant frequencies:" << formantFreqs;
+        qDebug() << "FreqScannerSink::voiceActivityLevel: Voice activity detection (formant-based):"
+                 << "freq:" << freq << "Hz"
+                 << "formants:" << formantFreqs.size() << "(merged from" << formantBins.size() << "peaks)"
+                 << "F1:" << (hasF1 ? QString::number(formantFreqs[0], 'f', 0) : "none") << "Hz"
+                 << "F2:" << (hasF2 ? QString::number(f2Freq, 'f', 0) : "none") << "Hz"
+                 << "spacing:" << (hasF2 ? QString::number(f2Freq - formantFreqs[0], 'f', 0) : "none") << "Hz"
+                 << "peak-to-noise:" << (maxEnv / noiseFloor)
+                 << "noiseFloor:" << noiseFloor << "threshold:" << threshold
+                 << "f1Mag:" << f1Mag << "f2Mag:" << f2Mag
+                 << "score:" << score;
     }
 
     return score;
 }
+

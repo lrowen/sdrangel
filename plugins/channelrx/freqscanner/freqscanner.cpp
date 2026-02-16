@@ -484,13 +484,15 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                         // Find first frequency in list above threshold
                         for (int i = 0; i < m_scanResults.size(); i++)
                         {
-                            frequencySettings = m_settings.getFrequencySettings(m_scanResults[i].m_frequency);
+                            int j = m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb ?
+                                m_scanResults.size()-1 - i : i;
+                            frequencySettings = m_settings.getFrequencySettings(m_scanResults[j].m_frequency);
                             Real threshold = m_settings.getThreshold(frequencySettings);
 
-                            if ((m_scanResults[i].m_power >= threshold)
-                            && checkVoiceThreshold(m_settings.m_voiceSquelchType, m_scanResults[i].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
+                            if ((m_scanResults[j].m_power >= threshold)
+                            && checkVoiceThreshold(m_settings.m_voiceSquelchType, m_scanResults[j].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
                             {
-                                frequency = m_scanResults[i].m_frequency;
+                                frequency = m_scanResults[j].m_frequency;
                                 activeFrequencySettings = frequencySettings;
                                 break;
                             }
