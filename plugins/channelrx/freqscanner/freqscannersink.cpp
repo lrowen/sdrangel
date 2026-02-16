@@ -505,6 +505,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
         // Try different f0 candidates in typical voice range (80-300 Hz)
         int maxHarmonics = 0;
+        int bestF0Hz = 0;
 
         for (int f0Hz = 80; f0Hz <= 300; f0Hz += 10)
         {
@@ -536,6 +537,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
             if (harmonicCount > maxHarmonics)
             {
                 maxHarmonics = harmonicCount;
+                bestF0Hz = f0Hz;
             }
         }
 
@@ -543,6 +545,44 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
         // If mistuned by 1 kHz, formants won't align with any harmonic series
         if (maxHarmonics < 3) {
             return 0.0;
+        }
+
+        // Check if first harmonic (f0) is actually present at low frequency
+        // When tuned correctly, f0 should be 80-300 Hz from carrier
+        int f0Bins = (int)(bestF0Hz / binBW);
+        int firstHarmonicBin = carrierBin + (isLSB ? -1 : 1) * f0Bins;
+        int tolerance = (int)(30.0 / binBW);
+
+        bool hasF0 = false;
+        for (int p = 0; p < peakBins.size(); p++)
+        {
+            if (std::abs(peakBins[p] - firstHarmonicBin) <= tolerance)
+            {
+                hasF0 = true;
+                break;
+            }
+        }
+
+        // If no peak near fundamental frequency, signal is mistuned
+        // (harmonics may still align but they're higher harmonics of wrong pitch)
+        if (!hasF0) {
+            return 0.0;
+        }
+
+        // Verify at least one broad formant in F1 range (300-1000 Hz from carrier)
+        // This catches low-tuning errors where harmonics might still align
+        bool hasF1 = false;
+        for (int p = 0; p < broadPeakBins.size(); p++)
+        {
+            float freqOffset = std::abs(broadPeakBins[p] - carrierBin) * binBW;
+            if (freqOffset >= 300.0 && freqOffset <= 1000.0) {
+                hasF1 = true;
+                break;
+            }
+        }
+
+        if (!hasF1) {
+            return 0.0; // No F1 formant - signal is mistuned
         }
 
         // Base score from number of broad peaks
