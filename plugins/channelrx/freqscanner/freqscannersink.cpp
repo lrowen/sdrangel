@@ -378,6 +378,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
     // Find peaks above noise floor
     QVector<int> peakBins;
+    QVector<int> broadPeakBins;
     QVector<Real> peakMags;
 
     // Calculate average noise floor from raw FFT
@@ -469,20 +470,22 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
 
         // Voice formants are typically 50-200 Hz wide
         // CW signals are <50 Hz wide
-        if (bandwidth >= 50.0 && bandwidth <= 200.0) {
+        if (bandwidth >= 50.0 && bandwidth <= 200.0)
+        {
+            broadPeakBins.append(peakBin);
             broadPeakCount++;
         }
     }
 
     // Check formant spacing (voice formants are typically 500-1500 Hz apart)
     bool goodSpacing = false;
-    if (broadPeakCount >= 2 && peakBins.size() >= 2)
+    if (broadPeakCount >= 2)
     {
-        for (int p = 0; p < peakBins.size() - 1; p++)
+        for (int p = 0; p < broadPeakBins.size() - 1; p++)
         {
-            int spacing = std::abs(peakBins[p + 1] - peakBins[p]);
+            int spacing = std::abs(broadPeakBins[p + 1] - broadPeakBins[p]);
             float spacingHz = spacing * binBW;
-            if (spacingHz >= 400.0 && spacingHz <= 1800.0) {
+            if (spacingHz >= 400.0 && spacingHz <= 1100.0) {
                 goodSpacing = true;
                 break;
             }
@@ -555,7 +558,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB) c
             score = std::min(score * 1.2f, 1.0f);
         }
 
-        // Penalize if too many narrow peaks (likely CW or noise) 
+        // Penalize if too many narrow peaks (likely CW or noise)
         // => This condition is ALWAYS true as there are always many more peaks than broad peaks
         // int narrowPeakCount = peakBins.size() - broadPeakCount;
         // if (narrowPeakCount > broadPeakCount) {
