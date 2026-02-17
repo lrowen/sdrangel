@@ -489,8 +489,9 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                             frequencySettings = m_settings.getFrequencySettings(m_scanResults[j].m_frequency);
                             Real threshold = m_settings.getThreshold(frequencySettings);
 
-                            if ((m_scanResults[j].m_power >= threshold)
-                            && checkVoiceThreshold(m_settings.m_voiceSquelchType, m_scanResults[j].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
+                            if (checkThresholds(m_settings.m_voiceSquelchType, m_scanResults[j], threshold, m_settings.m_voiceSquelchThreshold))
+                            // if ((m_scanResults[j].m_power >= threshold)
+                            // && checkVoiceThreshold(m_settings.m_voiceSquelchType, m_scanResults[j].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
                             {
                                 frequency = m_scanResults[j].m_frequency;
                                 activeFrequencySettings = frequencySettings;
@@ -816,6 +817,17 @@ void FreqScanner::unmuteAll()
 bool FreqScanner::checkVoiceThreshold(FreqScannerSettings::VoiceSquelchType voiceSquelchType, Real voiceActivityLevel, Real voiceSquelchThreshold)
 {
     return (voiceSquelchType == FreqScannerSettings::VoiceSquelchType::None) || (voiceActivityLevel >= voiceSquelchThreshold);
+}
+
+bool FreqScanner::checkThresholds(
+    FreqScannerSettings::VoiceSquelchType voiceSquelchType, 
+    const FreqScanner::MsgScanResult::ScanResult& result,
+    Real powerThreshold,
+    Real voiceSquelchThreshold
+)
+{
+    return (((result.m_power >= powerThreshold) && (voiceSquelchType == FreqScannerSettings::VoiceSquelchType::None)) 
+    || (result.m_voiceActivityLevel >= voiceSquelchThreshold));
 }
 
 void FreqScanner::applyChannelSetting(const QString& channel)

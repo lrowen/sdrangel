@@ -448,6 +448,12 @@ private:
     void mute(unsigned int deviceSetIndex, unsigned int channelIndex);
     void unmute(unsigned int deviceSetIndex, unsigned int channelIndex);
     bool checkVoiceThreshold(FreqScannerSettings::VoiceSquelchType voiceSquelchType, Real voiceActivityLevel, Real voiceSquelchThreshold);
+    bool checkThresholds(
+        FreqScannerSettings::VoiceSquelchType voiceSquelchType, 
+        const FreqScanner::MsgScanResult::ScanResult& result,
+        Real powerThreshold,
+        Real voiceSquelchThreshold
+    );
 
     static QList<SWGSDRangel::SWGFreqScannerFrequency *> *createFrequencyList(const FreqScannerSettings& settings);
 

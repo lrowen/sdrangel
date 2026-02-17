@@ -43,7 +43,12 @@ FreqScannerSink::FreqScannerSink() :
         m_fftCounter(0),
         m_fftSize(1024),
         m_binsPerChannel(16),
-        m_averageCount(0)
+        m_averageCount(0),
+        m_cepstrumSequenceInverse(-1),
+        m_cepstrumSequenceForward(-1),
+        m_cepstrumFFTInverse(nullptr),
+        m_cepstrumFFTForward(nullptr),
+        m_cepstrumSize(0)
 {
     applySettings(m_settings, QStringList(), true);
     applyChannelSettings(m_channelSampleRate, m_channelFrequencyOffset, 16, 4, true);
@@ -51,10 +56,18 @@ FreqScannerSink::FreqScannerSink() :
 
 FreqScannerSink::~FreqScannerSink()
 {
-    if (m_fftSequence >= 0)
-    {
-        FFTFactory* fftFactory = DSPEngine::instance()->getFFTFactory();
+    FFTFactory* fftFactory = DSPEngine::instance()->getFFTFactory();
+    
+    if (m_fftSequence >= 0) {
         fftFactory->releaseEngine(m_fftSize, false, m_fftSequence);
+    }
+    
+    if (m_cepstrumSequenceInverse >= 0) {
+        fftFactory->releaseEngine(m_cepstrumSize, true, m_cepstrumSequenceInverse);
+    }
+    
+    if (m_cepstrumSequenceForward >= 0) {
+        fftFactory->releaseEngine(m_cepstrumSize, false, m_cepstrumSequenceForward);
     }
 }
 
@@ -211,8 +224,14 @@ void FreqScannerSink::processOneSample(Complex &ci)
                             Real voiceLevel = 0.0;
                             if ((m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb ||
                                  m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) &&
-                                m_voiceLevelCount[i] > 0) {
+                                m_voiceLevelCount[i] > 0) 
+                            {
                                 voiceLevel = m_voiceLevelSum[i] / m_voiceLevelCount[i];
+                                if (voiceLevel > m_settings.m_voiceSquelchThreshold) {
+                                    qDebug() << "FreqScannerSink::processOneSample: frequency" 
+                                        << frequency + (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb ? 1500 : -1500)
+                                        << "voiceLevel" << voiceLevel << "count" << m_voiceLevelCount[i];
+                                }
                             }
 
                             //qDebug() << "startFrequency:" << startFrequency << "m_scannerSampleRate:" << m_scannerSampleRate << "m_centerFrequency:" << m_centerFrequency << "frequency" << frequency << "bin" << bin << "power" << power << "voiceLevel" << voiceLevel;
@@ -297,10 +316,15 @@ Real FreqScannerSink::magSqFromRawFFT(int bin) const
     return magSq(fftBin);
 }
 
-// Compute formant envelope using log-domain spectral smoothing
+// Compute formant envelope using cepstral liftering
 // This separates vocal tract resonances (formants) from pitch harmonics
-void FreqScannerSink::getFormantEnvelope(int startBin, int endBin, QVector<Real>& envelope) const
+// Method: log spectrum → IFFT → lifter → FFT → exp
+void FreqScannerSink::getFormantEnvelope(int startBin, int endBin, QVector<Real>& envelope, Real *pitchHz)
 {
+    if (pitchHz) {
+        *pitchHz = 0.0;
+    }
+
     if (startBin < 0 || endBin >= m_fftSize || startBin > endBin) {
         envelope.clear();
         return;
@@ -309,68 +333,167 @@ void FreqScannerSink::getFormantEnvelope(int startBin, int endBin, QVector<Real>
     int numBins = endBin - startBin + 1;
     envelope.resize(numBins);
 
+    // Check if cepstral FFT engines are available and large enough
+    if (!m_cepstrumFFTInverse || !m_cepstrumFFTForward || numBins > m_cepstrumSize) {
+        // qDebug() << "FreqScannerSink::getFormantEnvelope: Cepstral FFT not available or too small"
+        //          << "numBins:" << numBins << "cepstrumSize:" << m_cepstrumSize;
+        // Fallback: return simple log/exp without cepstral processing
+        for (int i = 0; i < numBins; i++) {
+            Real magSq = magSqFromRawFFT(startBin + i);
+            envelope[i] = std::sqrt(std::max(magSq, (Real)1e-12));
+        }
+        return;
+    }
+
     // Step 1: Compute log magnitude spectrum
     QVector<Real> logMag(numBins);
     Real minLog = -10.0; // Floor to avoid log(0)
+    Real sumMagSq = 0.0;
     
     for (int i = 0; i < numBins; i++)
     {
         Real magSq = magSqFromRawFFT(startBin + i);
+        sumMagSq += magSq;
         Real mag = std::sqrt(std::max(magSq, (Real)1e-12));
         logMag[i] = std::log(mag);
         if (logMag[i] < minLog) {
             logMag[i] = minLog;
         }
     }
+    
+    // qDebug() << "FreqScannerSink::getFormantEnvelope: Input spectrum check:"
+    //          << "numBins:" << numBins
+    //          << "sumMagSq:" << sumMagSq
+    //          << "avgMagSq:" << (sumMagSq / numBins)
+    //          << "first 5 logMag:" << logMag.mid(0, std::min(5, numBins));
 
-    // Step 2: Apply smoothing in log domain to extract formant envelope
-    // This removes rapid variations (pitch harmonics) while keeping slow variations (formants)
-    // Use moving average filter with window size based on expected harmonic spacing
+    // Step 2: Apply cepstral liftering for better source-filter separation
+    // Cepstral analysis separates:
+    //   - Voice pitch (high quefrency peak) 
+    //   - Formants (low quefrency components)
+    // Liftering = low-pass filtering in quefrency domain
     
-    float binBW = m_scannerSampleRate / (float)m_fftSize;
+    // Copy log magnitude to inverse FFT input (real data, symmetric spectrum)
+    // For real cepstrum, we need a symmetric spectrum:
+    // [DC, positive freqs, Nyquist, negative freqs (mirror)]
     
-    // For formant detection, smooth over approximately 200-300 Hz
-    // This is wider than typical harmonic spacing (80-300 Hz) but narrower than formant bandwidth
-    float smoothingBandwidthHz = 250.0; // Hz
-    int smoothingWindow = std::max(3, (int)(smoothingBandwidthHz / binBW));
+    // DC component
+    m_cepstrumFFTInverse->in()[0] = Complex(logMag[0], 0.0);
     
-    // Make smoothing window odd for symmetry
-    if (smoothingWindow % 2 == 0) {
-        smoothingWindow++;
+    // Positive frequencies
+    int halfBins = std::min(numBins, m_cepstrumSize / 2);
+    for (int i = 1; i < halfBins; i++) {
+        m_cepstrumFFTInverse->in()[i] = Complex(logMag[i], 0.0);
     }
     
-    int halfWindow = smoothingWindow / 2;
+    // Nyquist (if we have space)
+    if (m_cepstrumSize > halfBins) {
+        m_cepstrumFFTInverse->in()[halfBins] = Complex(numBins > halfBins ? logMag[halfBins] : logMag[halfBins-1], 0.0);
+    }
     
-    // qDebug() << "FreqScannerSink::getFormantEnvelope smoothingWindow:" << smoothingWindow 
-    //          << "bins (" << (smoothingWindow * binBW) << "Hz)";
+    // Negative frequencies (mirror of positive)
+    for (int i = 1; i < halfBins; i++) {
+        m_cepstrumFFTInverse->in()[m_cepstrumSize - i] = Complex(logMag[i], 0.0);
+    }
+    
+    // Zero-pad the middle if needed
+    for (int i = halfBins + 1; i < m_cepstrumSize - halfBins; i++) {
+        m_cepstrumFFTInverse->in()[i] = Complex(0.0, 0.0);
+    }
+    
+    // Step 3: IFFT to get cepstrum (quefrency domain)
+    m_cepstrumFFTInverse->transform();
+    
+    // Step 4: Estimate pitch from the cepstrum before liftering.
+    // Pitch appears as a peak at higher quefrencies (around 3-14 ms).
+    float binBW = m_scannerSampleRate / (float)m_fftSize;
+    float quefrencyResolution = 1.0f / (m_cepstrumSize * binBW); // seconds per bin in quefrency
 
-    // Apply moving average smoothing
-    QVector<Real> smoothedLog(numBins);
-    for (int i = 0; i < numBins; i++)
-    {
-        Real sum = 0.0;
-        int count = 0;
-        
-        for (int j = -halfWindow; j <= halfWindow; j++)
-        {
-            int idx = i + j;
-            if (idx >= 0 && idx < numBins) {
-                sum += logMag[idx];
-                count++;
+    if (pitchHz) {
+        const float minPitchHz = 70.0f;
+        const float maxPitchHz = 300.0f;
+        const float minQuefrency = 1.0f / maxPitchHz;
+        const float maxQuefrency = 1.0f / minPitchHz;
+        const int minBin = std::max(1, (int)std::ceil(minQuefrency / quefrencyResolution));
+        const int maxBin = std::min(m_cepstrumSize / 2, (int)std::floor(maxQuefrency / quefrencyResolution));
+        Real maxVal = 0.0;
+        int maxIdx = -1;
+
+        for (int i = minBin; i <= maxBin; i++) {
+            Real val = std::abs(m_cepstrumFFTInverse->out()[i].real());
+            if (val > maxVal) {
+                maxVal = val;
+                maxIdx = i;
             }
         }
-        
-        smoothedLog[i] = (count > 0) ? (sum / count) : logMag[i];
+
+        if (maxIdx > 0) {
+            *pitchHz = 1.0f / (maxIdx * quefrencyResolution);
+        }
     }
 
-    // Step 3: Convert back to linear magnitude
+    // Step 5: Apply lifter (low-pass filter in quefrency domain)
+    // Lifter cutoff: keep low quefrencies (formant envelope), remove high quefrencies (pitch harmonics)
+    // Typical pitch periods: 3-10 ms (100-330 Hz F0)
+    // We want to remove quefrencies corresponding to pitch harmonics
+    
+    // Lifter cutoff in seconds (quefrency): keep components below this
+    // Use much lower cutoff - we only need to keep very low quefrencies for formant envelope
+    // Most formant information is in the first few quefrency bins
+    float lifterCutoffQuefrency = 0.002f; // 2 ms (reduced from 8 ms)
+    int lifterCutoffBin = std::max(1, (int)(lifterCutoffQuefrency / quefrencyResolution));
+    
+    // Cap the lifter cutoff to reasonable maximum (1/4 of cepstrum size)
+    lifterCutoffBin = std::min(lifterCutoffBin, m_cepstrumSize / 4);
+    
+    // Apply lifter: keep low quefrencies, zero out high quefrencies
+    // Use smooth transition (raised cosine) to reduce artifacts
+    int transitionBins = std::max(1, lifterCutoffBin / 4);
+    
+    for (int i = 0; i < m_cepstrumSize; i++) {
+        Real lifterWeight = 1.0;
+        
+        if (i > lifterCutoffBin + transitionBins) {
+            lifterWeight = 0.0; // Zero out high quefrencies
+        } else if (i > lifterCutoffBin) {
+            // Smooth transition using raised cosine
+            float t = (float)(i - lifterCutoffBin) / transitionBins;
+            lifterWeight = 0.5 * (1.0 + std::cos(M_PI * t));
+        }
+        // else: lifterWeight = 1.0 (keep low quefrencies)
+        
+        m_cepstrumFFTForward->in()[i] = m_cepstrumFFTInverse->out()[i] * lifterWeight;
+    }
+    
+    // qDebug() << "FreqScannerSink::getFormantEnvelope cepstral lifter:"
+    //          << "cutoff bin:" << lifterCutoffBin 
+    //          << "(" << (lifterCutoffBin * quefrencyResolution * 1000.0) << "ms)"
+    //          << "quefrency resolution:" << (quefrencyResolution * 1000.0) << "ms/bin";
+    
+    // Step 6: FFT back to frequency domain (smoothed log spectrum)
+    m_cepstrumFFTForward->transform();
+    
+    // Debug: check forward FFT output
+    // qDebug() << "FreqScannerSink::getFormantEnvelope: Forward FFT output check:"
+    //          << "first 5 real:" << m_cepstrumFFTForward->out()[0].real()
+    //          << m_cepstrumFFTForward->out()[1].real()
+    //          << m_cepstrumFFTForward->out()[2].real()
+    //          << m_cepstrumFFTForward->out()[3].real()
+    //          << m_cepstrumFFTForward->out()[4].real();
+    
+    // Step 7: Convert back to linear magnitude
+    // Take real part of FFT output and exponentiate
+    // IMPORTANT: Normalize by FFT size since FFT engines don't auto-normalize
+    Real normalization = 1.0 / m_cepstrumSize;
+    
     for (int i = 0; i < numBins; i++)
     {
-        envelope[i] = std::exp(smoothedLog[i]);
+        Real smoothedLog = m_cepstrumFFTForward->out()[i].real() * normalization;
+        envelope[i] = std::exp(smoothedLog);
     }
     
     // Debug: print first few envelope values
-    // qDebug() << "FreqScannerSink::getFormantEnvelope first 10 envelope values:" 
+    // qDebug() << "FreqScannerSink::getFormantEnvelope (cepstral) first 10 envelope values:" 
     //          << envelope.mid(0, std::min(10, numBins));
 }
 
@@ -400,7 +523,7 @@ void FreqScannerSink::applyChannelSettings(int channelSampleRate, int channelFre
     {
         FFTFactory* fftFactory = DSPEngine::instance()->getFFTFactory();
         if (m_fftSequence >= 0) {
-            fftFactory->releaseEngine(fftSize, false, m_fftSequence);
+            fftFactory->releaseEngine(m_fftSize, false, m_fftSequence);
         }
         m_fftSequence = fftFactory->getEngine(fftSize, false, &m_fft);
         m_fftCounter = 0;
@@ -417,6 +540,32 @@ void FreqScannerSink::applyChannelSettings(int channelSampleRate, int channelFre
         m_voiceLevelCount.resize(freqCount);
         m_voiceLevelSum.fill(0.0);
         m_voiceLevelCount.fill(0);
+        
+        // Allocate cepstral FFT engines for formant detection
+        // Size needs to be power-of-2 and >= channel bins (typically ~100-200 bins)
+        // Use conservative size to handle most SSB channels
+        int maxChannelBins = std::max(binsPerChannel * 2, 256);
+        int cepstrumSize = 1;
+        while (cepstrumSize < maxChannelBins) {
+            cepstrumSize <<= 1;
+        }
+        
+        if (m_cepstrumSize != cepstrumSize) {
+            // Release old engines if size changed
+            if (m_cepstrumSequenceInverse >= 0) {
+                fftFactory->releaseEngine(m_cepstrumSize, true, m_cepstrumSequenceInverse);
+            }
+            if (m_cepstrumSequenceForward >= 0) {
+                fftFactory->releaseEngine(m_cepstrumSize, false, m_cepstrumSequenceForward);
+            }
+            
+            // Allocate new engines
+            m_cepstrumSequenceInverse = fftFactory->getEngine(cepstrumSize, true, &m_cepstrumFFTInverse);
+            m_cepstrumSequenceForward = fftFactory->getEngine(cepstrumSize, false, &m_cepstrumFFTForward);
+            m_cepstrumSize = cepstrumSize;
+            
+            qDebug() << "FreqScannerSink::applyChannelSettings: Allocated cepstral FFT engines, size:" << cepstrumSize;
+        }
     }
 
     m_channelSampleRate = channelSampleRate;
@@ -448,7 +597,7 @@ void FreqScannerSink::applySettings(const FreqScannerSettings& settings, const Q
 // Voice activity detection for SSB signals
 // Detects voice by looking for formant-like structure using spectral smoothing
 // Returns a value from 0.0 (no voice) to 1.0 (strong voice signature)
-Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, bool isLSB) const
+Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, bool isLSB)
 {
     // Voice band in SSB is typically 100-3000 Hz from carrier
     // We look for 2-4 formant peaks in the smoothed spectral envelope
@@ -469,7 +618,8 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
     // Get formant envelope using spectral smoothing
     // This separates vocal tract resonances from pitch harmonics
     QVector<Real> formantEnvelope;
-    getFormantEnvelope(startBin, endBin, formantEnvelope);
+    Real pitchHz = 0.0;
+    getFormantEnvelope(startBin, endBin, formantEnvelope, &pitchHz);
 
     if (formantEnvelope.isEmpty()) {
         qDebug() << "FreqScannerSink::voiceActivityLevel formantEnvelope is empty!";
@@ -533,7 +683,8 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
 
     // Voice requires 2-4 formants
     if (formantBins.size() < 2) {
-        // qDebug() << "FreqScannerSink::voiceActivityLevel: Not enough peaks detected" << formantBins.size();
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Not enough peaks detected" << formantBins.size()
+        //          << "threshold:" << threshold << "envelope size:" << formantEnvelope.size();
         return 0.0;
     }
     
@@ -684,22 +835,45 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
     float magnitudeScore = std::min((float)(f1Mag + f2Mag) / (float)(noiseFloor * 6.0), 1.0f);
     score += magnitudeScore * 0.4; // 40% weight
 
+    // Apply a soft pitch-based weighting. Pitch helps detect detuning, but should not gate voice.
+    const float minPitchHz = 70.0f;
+    const float maxPitchHz = 300.0f;
+    const float softMinPitchHz = 50.0f;
+    const float softMaxPitchHz = 400.0f;
+    float pitchScore = 0.7f;
+
+    if (pitchHz > 0.0f) {
+        if (pitchHz >= minPitchHz && pitchHz <= maxPitchHz) {
+            pitchScore = 1.0f;
+        } else if (pitchHz >= softMinPitchHz && pitchHz <= softMaxPitchHz) {
+            if (pitchHz < minPitchHz) {
+                pitchScore = 0.7f + 0.3f * (pitchHz - softMinPitchHz) / (minPitchHz - softMinPitchHz);
+            } else {
+                pitchScore = 0.7f + 0.3f * (softMaxPitchHz - pitchHz) / (softMaxPitchHz - maxPitchHz);
+            }
+        } else {
+            pitchScore = 0.6f;
+        }
+    }
+
+    score *= pitchScore;
+
     // Clamp to [0, 1]
     score = std::max(0.0f, std::min(score, 1.0f));
 
-    if (score > m_settings.m_voiceSquelchThreshold) {
-        // qDebug() << "FreqScannerSink::voiceActivityLevel Sorted formant frequencies:" << formantFreqs;
-        qDebug() << "FreqScannerSink::voiceActivityLevel: Voice activity detection (formant-based):"
-                 << "freq:" << freq << "Hz"
-                 << "formants:" << formantFreqs.size() << "(merged from" << formantBins.size() << "peaks)"
-                 << "F1:" << (hasF1 ? QString::number(formantFreqs[0], 'f', 0) : "none") << "Hz"
-                 << "F2:" << (hasF2 ? QString::number(f2Freq, 'f', 0) : "none") << "Hz"
-                 << "spacing:" << (hasF2 ? QString::number(f2Freq - formantFreqs[0], 'f', 0) : "none") << "Hz"
-                 << "peak-to-noise:" << (maxEnv / noiseFloor)
-                 << "noiseFloor:" << noiseFloor << "threshold:" << threshold
-                 << "f1Mag:" << f1Mag << "f2Mag:" << f2Mag
-                 << "score:" << score;
-    }
+    // if (score > m_settings.m_voiceSquelchThreshold) {
+    //     qDebug() << "FreqScannerSink::voiceActivityLevel:"
+    //              << "freq:" << freq + (isLSB ? 1500 : -1500) << "Hz"
+    //              << "formants:" << formantFreqs.size() << "(merged from" << formantBins.size() << "peaks)"
+    //              << "F1:" << (hasF1 ? QString::number(formantFreqs[0], 'f', 0) : "none") << "Hz"
+    //              << "F2:" << (hasF2 ? QString::number(f2Freq, 'f', 0) : "none") << "Hz"
+    //              << "spacing:" << (hasF2 ? QString::number(f2Freq - formantFreqs[0], 'f', 0) : "none") << "Hz"
+    //              << "peak-to-noise:" << (maxEnv / noiseFloor)
+    //              << "noiseFloor:" << noiseFloor << "threshold:" << threshold
+    //              << "f1Mag:" << f1Mag << "f2Mag:" << f2Mag
+    //              << "pitchHz:" << pitchHz << "pitchScore:" << pitchScore
+    //              << "score:" << score;
+    // }
 
     return score;
 }
