@@ -228,7 +228,7 @@ void FreqScannerSink::processOneSample(Complex &ci)
                             {
                                 voiceLevel = m_voiceLevelSum[i] / m_voiceLevelCount[i];
                                 if (voiceLevel > m_settings.m_voiceSquelchThreshold) {
-                                    qDebug() << "FreqScannerSink::processOneSample: frequency" 
+                                    qDebug() << "FreqScannerSink::processOneSample: freq" 
                                         << frequency + (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb ? 1500 : -1500)
                                         << "voiceLevel" << voiceLevel << "count" << m_voiceLevelCount[i];
                                 }
@@ -670,10 +670,17 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
         if (curr > prev && curr > next && curr > threshold)
         {
             int absBin = startBin + i;
-            float freqOffset = std::abs(absBin - carrierBin) * binBW;
+            // Use SIGNED offset to distinguish USB from LSB and reject mistuned signals
+            // USB: formants at positive offset (100-3000 Hz above carrier)
+            // LSB: formants at negative offset (-3000 to -100 Hz below carrier)
+            float freqOffset = (absBin - carrierBin) * binBW;
 
-            // Only include peaks within SSB voice bandwidth (100-3000 Hz from carrier)
-            if (freqOffset >= 100.0 && freqOffset <= 3000.0)
+            // Check appropriate sideband for voice: USB uses positive, LSB uses negative
+            // This rejects signals tuned to wrong sideband (e.g., 1kHz offset)
+            bool inVoiceBand = isLSB ? (freqOffset <= -100.0 && freqOffset >= -3000.0)
+                                     : (freqOffset >= 100.0 && freqOffset <= 3000.0);
+            
+            if (inVoiceBand)
             {
                 formantBins.append(absBin);
                 formantMags.append(curr);
@@ -691,11 +698,13 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
     // qDebug() << "FreqScannerSink::voiceActivityLevel: Detected" << formantBins.size() << "peaks above threshold";
     
     // Sort formants by frequency offset (not bin order) to handle LSB reversal
+    // Convert to absolute frequencies since F1/F2 validation expects positive values
     QVector<float> formantFreqs;
     QVector<int> formantIndices;
     
     for (int i = 0; i < formantBins.size(); i++)
     {
+        // Use absolute value for formant frequency analysis (F1, F2 ranges are defined as positive)
         float freqOffset = std::abs(formantBins[i] - carrierBin) * binBW;
         formantFreqs.append(freqOffset);
         formantIndices.append(i);
@@ -841,6 +850,8 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
     const float softMinPitchHz = 50.0f;
     const float softMaxPitchHz = 400.0f;
     float pitchScore = 0.7f;
+    float harmonicAlignmentScore = 0.75f;
+    float formantIndexScore = 0.8f;
 
     if (pitchHz > 0.0f) {
         if (pitchHz >= minPitchHz && pitchHz <= maxPitchHz) {
@@ -854,16 +865,108 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
         } else {
             pitchScore = 0.6f;
         }
+
+        // Check harmonic-comb alignment against the estimated pitch.
+        // A wrong carrier offset shifts all harmonics by a constant frequency,
+        // so they no longer align with integer multiples of pitch.
+        const float harmonicToleranceHz = std::max(2.0f * binBW, 0.18f * (float) pitchHz);
+        Real rawNoiseFloor = 0.0;
+        int rawBinCount = 0;
+
+        for (int absBin = startBin; absBin <= endBin; absBin++)
+        {
+            float signedOffset = (absBin - carrierBin) * binBW;
+            float voiceOffset = isLSB ? -signedOffset : signedOffset;
+
+            if (voiceOffset >= 100.0f && voiceOffset <= 3000.0f)
+            {
+                rawNoiseFloor += m_magSq[absBin];
+                rawBinCount++;
+            }
+        }
+
+        rawNoiseFloor = rawBinCount > 0 ? rawNoiseFloor / rawBinCount : 0.0;
+
+        Real alignedEnergy = 0.0;
+        Real totalEnergy = 0.0;
+
+        for (int absBin = startBin; absBin <= endBin; absBin++)
+        {
+            float signedOffset = (absBin - carrierBin) * binBW;
+            float voiceOffset = isLSB ? -signedOffset : signedOffset;
+
+            if (voiceOffset < 100.0f || voiceOffset > 3000.0f) {
+                continue;
+            }
+
+            Real binEnergy = m_magSq[absBin];
+
+            if (binEnergy <= rawNoiseFloor * 1.2f) {
+                continue;
+            }
+
+            float residue = std::fmod(voiceOffset, (float) pitchHz);
+            if (residue < 0.0f) {
+                residue += (float) pitchHz;
+            }
+
+            float harmonicDistance = std::min(residue, (float) pitchHz - residue);
+            Real weightedEnergy = std::max(binEnergy - rawNoiseFloor, (Real) 0.0);
+
+            totalEnergy += weightedEnergy;
+
+            if (harmonicDistance <= harmonicToleranceHz) {
+                alignedEnergy += weightedEnergy;
+            }
+        }
+
+        if (totalEnergy > 0.0)
+        {
+            float harmonicAlignment = alignedEnergy / totalEnergy;
+            float normalizedAlignment = (harmonicAlignment - 0.20f) / 0.45f;
+            normalizedAlignment = std::max(0.0f, std::min(normalizedAlignment, 1.0f));
+            harmonicAlignmentScore = 0.5f + 0.5f * normalizedAlignment;
+        }
+
+        // Check formant harmonic-index plausibility.
+        // Wrong carrier tuning that shifts spectrum down can make F2/F3 appear as F1/F2.
+        // In that case the implied harmonic indices become unusually high.
+        float f1HarmonicIndex = formantFreqs[0] / (float) pitchHz;
+        float f2HarmonicIndex = f2Freq / (float) pitchHz;
+        float harmonicGap = f2HarmonicIndex - f1HarmonicIndex;
+
+        float f1IndexScore = 1.0f;
+        if (f1HarmonicIndex < 2.0f) {
+            f1IndexScore = std::max(0.0f, (f1HarmonicIndex - 1.0f) / 1.0f);
+        } else if (f1HarmonicIndex > 18.0f) {
+            f1IndexScore = std::max(0.0f, (26.0f - f1HarmonicIndex) / 8.0f);
+        }
+
+        float f2IndexScore = 1.0f;
+        if (f2HarmonicIndex < 5.0f) {
+            f2IndexScore = std::max(0.0f, (f2HarmonicIndex - 3.0f) / 2.0f);
+        } else if (f2HarmonicIndex > 36.0f) {
+            f2IndexScore = std::max(0.0f, (44.0f - f2HarmonicIndex) / 8.0f);
+        }
+
+        float gapScore = 1.0f;
+        if (harmonicGap < 3.0f) {
+            gapScore = std::max(0.0f, (harmonicGap - 1.0f) / 2.0f);
+        } else if (harmonicGap > 22.0f) {
+            gapScore = std::max(0.0f, (28.0f - harmonicGap) / 6.0f);
+        }
+
+        formantIndexScore = std::max(0.4f, 0.25f + 0.75f * (0.40f * f1IndexScore + 0.40f * f2IndexScore + 0.20f * gapScore));
     }
 
-    score *= pitchScore;
+    score *= pitchScore * harmonicAlignmentScore * formantIndexScore;
 
     // Clamp to [0, 1]
     score = std::max(0.0f, std::min(score, 1.0f));
 
-    // if (score > m_settings.m_voiceSquelchThreshold) {
-    //     qDebug() << "FreqScannerSink::voiceActivityLevel:"
-    //              << "freq:" << freq + (isLSB ? 1500 : -1500) << "Hz"
+    if (score > m_settings.m_voiceSquelchThreshold) {
+        qDebug() << "FreqScannerSink::voiceActivityLevel:"
+                 << "freq:" << freq + (isLSB ? 1500 : -1500) << "Hz"
     //              << "formants:" << formantFreqs.size() << "(merged from" << formantBins.size() << "peaks)"
     //              << "F1:" << (hasF1 ? QString::number(formantFreqs[0], 'f', 0) : "none") << "Hz"
     //              << "F2:" << (hasF2 ? QString::number(f2Freq, 'f', 0) : "none") << "Hz"
@@ -872,8 +975,9 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
     //              << "noiseFloor:" << noiseFloor << "threshold:" << threshold
     //              << "f1Mag:" << f1Mag << "f2Mag:" << f2Mag
     //              << "pitchHz:" << pitchHz << "pitchScore:" << pitchScore
-    //              << "score:" << score;
-    // }
+                 << "harmonicAlignment:" << harmonicAlignmentScore
+                 << "score:" << score;
+    }
 
     return score;
 }
