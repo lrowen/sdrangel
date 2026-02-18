@@ -827,6 +827,40 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
         return 0.0; // No F2 formant - not voice or mistuned
     }
 
+    // Additional F1 plausibility checks.
+    // Prevent a tiny low-frequency ripple from being accepted as F1 when
+    // dominant formant energy is shifted high (e.g. around 2 kHz).
+    Real strongestFormantMag = 0.0;
+    float strongestFormantFreq = 0.0f;
+
+    for (int i = 0; i < formantFreqs.size(); i++)
+    {
+        int idx = formantIndices[i];
+        if (formantMags[idx] > strongestFormantMag)
+        {
+            strongestFormantMag = formantMags[idx];
+            strongestFormantFreq = formantFreqs[i];
+        }
+    }
+
+    const float minF1ToStrongestRatio = 0.35f;
+    const float dominantHighFormantHz = 1200.0f;
+    bool weakF1 = f1Mag < strongestFormantMag * minF1ToStrongestRatio;
+    bool dominantIsHigh = strongestFormantFreq >= dominantHighFormantHz;
+
+    if (weakF1 && dominantIsHigh) {
+        // qDebug() << "FreqScannerSink::voiceActivityLevel: Rejected weak F1 with dominant high formant"
+        //          << "F1:" << formantFreqs[0] << "Hz" << "F1 mag:" << f1Mag
+        //          << "strongest:" << strongestFormantFreq << "Hz" << strongestFormantMag;
+        return 0.0;
+    }
+
+    // F1 must have a minimum contrast above noise floor.
+    if (f1Mag < noiseFloor * 1.25f) {
+        return 0.0;
+    }
+    // Additional F1 plausibility checks - end
+
     // Calculate voice activity score based on formant characteristics
     // Voice is indicated by presence of F1 and F2 formants - this is the primary voice signature
     // Harmonics are less reliable in SSB due to spectral properties and noise
