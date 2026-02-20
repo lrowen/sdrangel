@@ -649,7 +649,9 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                 if ((results[i].m_power >= threshold) 
                 && checkVoiceThreshold(m_settings.m_voiceSquelchType, results[i].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
                 {
-                    qDebug("FreqScanner::processScanResults: WAIT_FOR_RETRANSMISSION restart: voice score: %f", results[i].m_voiceActivityLevel);
+                    if (m_settings.m_voiceSquelchType != FreqScannerSettings::VoiceSquelchType::None) {
+                        qDebug("FreqScanner::processScanResults: WAIT_FOR_RETRANSMISSION restart: voice score: %f", results[i].m_voiceActivityLevel);
+                    }
                     m_timeoutTimer.stop();
                     m_state = WAIT_FOR_END_TX;
                 }

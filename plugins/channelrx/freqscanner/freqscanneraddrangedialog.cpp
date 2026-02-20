@@ -168,6 +168,24 @@ void FreqScannerAddRangeDialog::on_preset_currentTextChanged(const QString& text
     {
         enableManAdjust = false;
     }
+    else if (text == "HF 20m")
+    {
+        ui->start->setValue(14180500);
+        ui->stop->setValue(14250500);
+        ui->step->setCurrentText("1000");
+    }
+    else if (text == "HF 40m")
+    {
+        ui->start->setValue(7110500);
+        ui->stop->setValue(7190500);
+        ui->step->setCurrentText("1000");
+    }
+    else if (text == "HF 80m")
+    {
+        ui->start->setValue(3680500);
+        ui->stop->setValue(3780500);
+        ui->step->setCurrentText("1000");
+    }
     ui->start->setEnabled(enableManAdjust);
     ui->stop->setEnabled(enableManAdjust);
     ui->step->setEnabled(enableManAdjust);

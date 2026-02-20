@@ -371,7 +371,38 @@ void FreqScannerGUI::on_voiceThreshold_valueChanged(int value)
 void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
 {
     m_settings.m_voiceSquelchType = (FreqScannerSettings::VoiceSquelchType)index;
-    applySetting("voiceSquelchType");
+    QStringList settingsKeys({"voiceSquelchType"});
+    
+    if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb)
+    {
+        blockApplySettings(true);
+        m_settings.m_channelBandwidth = 3000;
+        ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
+        m_settings.m_channelShift = 1500;
+        ui->channelShift->setValue(m_settings.m_channelShift);
+        m_settings.m_priority = FreqScannerSettings::TABLE_ORDER;
+        ui->priority->setCurrentIndex((int)m_settings.m_priority);
+        settingsKeys.append("channelBandwidth");
+        settingsKeys.append("channelShift");
+        settingsKeys.append("priority");
+        blockApplySettings(false);
+    }
+    else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
+    {
+        blockApplySettings(true);
+        m_settings.m_channelBandwidth = 3000;
+        ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
+        m_settings.m_channelShift = -1500;
+        ui->channelShift->setValue(m_settings.m_channelShift);
+        m_settings.m_priority = FreqScannerSettings::TABLE_ORDER;
+        ui->priority->setCurrentIndex((int)m_settings.m_priority);
+        settingsKeys.append("channelBandwidth");
+        settingsKeys.append("channelShift");
+        settingsKeys.append("priority");
+        blockApplySettings(false);
+    }
+    
+    applySettings(settingsKeys);
 }
 
 void FreqScannerGUI::on_priority_currentIndexChanged(int index)
@@ -795,6 +826,13 @@ void FreqScannerGUI::on_removeInactive_clicked()
             m_settings.m_frequencySettings.removeAt(i);
         }
     }
+    applySetting("frequencySettings");
+}
+
+void FreqScannerGUI::on_removeAll_clicked()
+{
+    ui->table->setRowCount(0);
+    m_settings.m_frequencySettings.clear();
     applySetting("frequencySettings");
 }
 
@@ -1290,6 +1328,7 @@ void FreqScannerGUI::makeUIConnections()
     QObject::connect(ui->addRange, &QToolButton::clicked, this, &FreqScannerGUI::on_addRange_clicked);
     QObject::connect(ui->remove, &QToolButton::clicked, this, &FreqScannerGUI::on_remove_clicked);
     QObject::connect(ui->removeInactive, &QToolButton::clicked, this, &FreqScannerGUI::on_removeInactive_clicked);
+    QObject::connect(ui->removeAll, &QToolButton::clicked, this, &FreqScannerGUI::on_removeAll_clicked);
     QObject::connect(ui->up, &QToolButton::clicked, this, &FreqScannerGUI::on_up_clicked);
     QObject::connect(ui->down, &QToolButton::clicked, this, &FreqScannerGUI::on_down_clicked);
     QObject::connect(ui->clearActiveCount, &QToolButton::clicked, this, &FreqScannerGUI::on_clearActiveCount_clicked);
