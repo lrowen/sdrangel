@@ -90,7 +90,7 @@ private:
     Real peakPower(int bin, int channelBins) const;
     Real magSq(int bin) const;
     Real magSqFromRawFFT(int bin) const;
-    Real voiceActivityLevel(qint64 freq, int bin, int channelBins, bool isLSB);
+    Real voiceActivityLevel(int bin, int channelBins, bool isLSB);
     void getFormantEnvelope(int startBin, int endBin, QVector<Real>& envelope, Real *pitchHz = nullptr);
 };
 

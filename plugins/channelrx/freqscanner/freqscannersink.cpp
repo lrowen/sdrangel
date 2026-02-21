@@ -155,9 +155,9 @@ void FreqScannerSink::processOneSample(Complex &ci)
 
                     Real voiceLevel = 0.0;
                     if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceLsb) {
-                        voiceLevel = voiceActivityLevel(frequency, bin, channelBins, true);
+                        voiceLevel = voiceActivityLevel(bin, channelBins, true);
                     } else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceUsb) {
-                        voiceLevel = voiceActivityLevel(frequency, bin, channelBins, false);
+                        voiceLevel = voiceActivityLevel(bin, channelBins, false);
                     }
 
                     if (voiceLevel > 0.0) {
@@ -417,7 +417,7 @@ void FreqScannerSink::applySettings(const FreqScannerSettings& settings, const Q
 // Voice activity detection for SSB signals
 // Detects voice by looking for formant-like structure using spectral smoothing
 // Returns a value from 0.0 (no voice) to 1.0 (strong voice signature)
-Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, bool isLSB)
+Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
 {
     // Voice band in SSB is typically 100-3000 Hz from carrier
     // We look for 2-4 formant peaks in the smoothed spectral envelope
@@ -634,6 +634,100 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
         return 0.0; // No F2 formant - not voice or mistuned
     }
 
+    // Reject strongly tonal spectra (typical CW / single-tone signals).
+    // Voice in SSB should have broader spectral spread, lower peak dominance,
+    // and non-negligible spectral flatness across the 100-3000 Hz voice band.
+    Real voiceBandTotalEnergy = 0.0;
+    Real voiceBandPeakEnergy = 0.0;
+    Real voiceBandSecondPeakEnergy = 0.0;
+    Real voiceBandLogEnergySum = 0.0;
+    Real voiceBandWeightedFreqSum = 0.0;
+    Real voiceBandWeightedFreqSqSum = 0.0;
+    QVector<Real> voiceBandEnergies;
+    voiceBandEnergies.reserve(std::max(0, endBin - startBin + 1));
+    int voiceBandBins = 0;
+
+    for (int absBin = startBin; absBin <= endBin; absBin++)
+    {
+        float signedOffset = (absBin - carrierBin) * binBW;
+        float voiceOffset = isLSB ? -signedOffset : signedOffset;
+
+        if (voiceOffset < 100.0f || voiceOffset > 3000.0f) {
+            continue;
+        }
+
+        Real binEnergy = magSqFromRawFFT(absBin);
+        Real safeEnergy = std::max(binEnergy, (Real) 1e-20);
+        voiceBandEnergies.append(safeEnergy);
+
+        voiceBandTotalEnergy += safeEnergy;
+
+        if (safeEnergy > voiceBandPeakEnergy)
+        {
+            voiceBandSecondPeakEnergy = voiceBandPeakEnergy;
+            voiceBandPeakEnergy = safeEnergy;
+        }
+        else if (safeEnergy > voiceBandSecondPeakEnergy)
+        {
+            voiceBandSecondPeakEnergy = safeEnergy;
+        }
+
+        voiceBandLogEnergySum += std::log(safeEnergy);
+        voiceBandWeightedFreqSum += safeEnergy * voiceOffset;
+        voiceBandWeightedFreqSqSum += safeEnergy * voiceOffset * voiceOffset;
+        voiceBandBins++;
+    }
+
+    if (voiceBandBins <= 0 || voiceBandTotalEnergy <= 0.0) {
+        return 0.0;
+    }
+
+    Real voiceBandMeanEnergy = voiceBandTotalEnergy / voiceBandBins;
+    Real voiceBandGeometricMean = std::exp(voiceBandLogEnergySum / voiceBandBins);
+    Real voiceBandMeanFreq = voiceBandWeightedFreqSum / voiceBandTotalEnergy;
+    Real voiceBandMeanFreqSq = voiceBandWeightedFreqSqSum / voiceBandTotalEnergy;
+    Real voiceBandVariance = std::max((Real) 0.0, voiceBandMeanFreqSq - voiceBandMeanFreq * voiceBandMeanFreq);
+    float voiceBandRmsSpreadHz = std::sqrt(voiceBandVariance);
+    float spectralFlatness = voiceBandMeanEnergy > 0.0 ? (voiceBandGeometricMean / voiceBandMeanEnergy) : 0.0f;
+    float peakFraction = voiceBandTotalEnergy > 0.0 ? (voiceBandPeakEnergy / voiceBandTotalEnergy) : 1.0f;
+    float peak12Ratio = voiceBandSecondPeakEnergy > 0.0 ? (voiceBandPeakEnergy / voiceBandSecondPeakEnergy) : 1000.0f;
+
+    int significantBins = 0;
+    Real significantThreshold = voiceBandMeanEnergy * 1.8;
+
+    for (const Real& binEnergy : voiceBandEnergies)
+    {
+        if (binEnergy > significantThreshold) {
+            significantBins++;
+        }
+    }
+
+    if ((peakFraction > 0.45f) || (spectralFlatness < 0.025f) || (significantBins < 5)) {
+        return 0.0;
+    }
+
+    // Additional strong-CW rejection:
+    // - very narrow energy spread in voice band
+    // - one dominant spectral line overwhelmingly larger than the second line
+    if ((voiceBandRmsSpreadHz < 220.0f) || ((peak12Ratio > 8.0f) && (significantBins < 9))) {
+        return 0.0;
+    }
+
+    float tonalPenalty = 1.0f;
+    if (peakFraction > 0.30f) {
+        tonalPenalty *= 0.6f;
+    }
+    if (spectralFlatness < 0.06f) {
+        tonalPenalty *= 0.7f;
+    }
+    if (voiceBandRmsSpreadHz < 350.0f) {
+        tonalPenalty *= 0.55f;
+    }
+    if (peak12Ratio > 4.0f) {
+        tonalPenalty *= 0.60f;
+    }
+    // CW rejection end
+
     // Additional F1 plausibility checks.
     // Prevent a tiny low-frequency ripple from being accepted as F1 when
     // dominant formant energy is shifted high (e.g. around 2 kHz).
@@ -718,7 +812,7 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
 
             if (voiceOffset >= 100.0f && voiceOffset <= 3000.0f)
             {
-                rawNoiseFloor += m_magSq[absBin];
+                rawNoiseFloor += magSqFromRawFFT(absBin);
                 rawBinCount++;
             }
         }
@@ -737,7 +831,7 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
                 continue;
             }
 
-            Real binEnergy = m_magSq[absBin];
+            Real binEnergy = magSqFromRawFFT(absBin);
 
             if (binEnergy <= rawNoiseFloor * 1.2f) {
                 continue;
@@ -797,18 +891,10 @@ Real FreqScannerSink::voiceActivityLevel(qint64 freq, int bin, int channelBins, 
         formantIndexScore = std::max(0.4f, 0.25f + 0.75f * (0.40f * f1IndexScore + 0.40f * f2IndexScore + 0.20f * gapScore));
     }
 
-    score *= pitchScore * harmonicAlignmentScore * formantIndexScore;
+    score *= tonalPenalty * pitchScore * harmonicAlignmentScore * formantIndexScore;
 
     // Clamp to [0, 1]
     score = std::max(0.0f, std::min(score, 1.0f));
-
-    // if (score > m_settings.m_voiceSquelchThreshold) {
-    //     qDebug() << "FreqScannerSink::voiceActivityLevel:"
-    //              << "freq:" << freq + (isLSB ? 1500 : -1500) << "Hz"
-    //              << "harmonicAlignment:" << harmonicAlignmentScore
-    //              << "score:" << score;
-    // }
-
     return score;
 }
 
