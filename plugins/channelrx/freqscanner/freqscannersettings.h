@@ -74,6 +74,8 @@ struct FreqScannerSettings
         SCAN_ONLY,
         MULTIPLEX
     } m_mode;                       //!< Whether to run a single or many scans
+    bool m_lockDeviceFrequency;     //!< Whether to lock device frequency to the initial center frequency of the first scan, 
+                                    //!< or allow it to be shifted by the channel shift setting 
 
     QList<int> m_columnIndexes;//!< How the columns are ordered in the table
     QList<int> m_columnSizes;  //!< Size of the coumns in the table

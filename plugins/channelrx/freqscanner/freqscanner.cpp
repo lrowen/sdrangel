@@ -314,7 +314,7 @@ void FreqScanner::initScan()
     // }
     mute(m_scanDeviceSetIndex, m_scanChannelIndex);
 
-    if (m_centerFrequency != m_stepStartFrequency) {
+    if (!m_settings.m_lockDeviceFrequency && (m_centerFrequency != m_stepStartFrequency)) {
         setDeviceCenterFrequency(m_stepStartFrequency);
     }
 
@@ -386,54 +386,77 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
             }
 
             // Calculate next center frequency
-            bool complete = false; // Have all frequencies been scanned?
-            bool freqInRange = false;
+            const bool lockDeviceFrequency = m_settings.m_lockDeviceFrequency;
+            const qint64 currentCenterFrequency = m_centerFrequency;
+            bool complete = lockDeviceFrequency; // Have all frequencies been scanned?
+            bool freqInRange = lockDeviceFrequency;
             qint64 nextCenterFrequency = m_centerFrequency;
             int usableBW = (m_scannerSampleRate * 3 / 4) & ~1;
-            int nextFrequencyIndex = 0;
-            do
+            int nextFrequencyIndex = -1;
+            const auto isInCurrentScanRange = [currentCenterFrequency, usableBW](qint64 frequency)
             {
-                if (nextCenterFrequency + usableBW / 2 > m_stepStopFrequency)
-                {
-                    nextCenterFrequency = m_stepStartFrequency;
-                    complete = true;
-                }
-                else
-                {
-                    nextCenterFrequency += usableBW;
-                    complete = false;
-                }
+                return (frequency >= currentCenterFrequency - usableBW / 2)
+                    && (frequency < currentCenterFrequency + usableBW / 2);
+            };
 
-                // Are any frequencies in this new range?
+            if (!lockDeviceFrequency)
+            {
+                do
+                {
+                    if (nextCenterFrequency + usableBW / 2 > m_stepStopFrequency)
+                    {
+                        nextCenterFrequency = m_stepStartFrequency;
+                        complete = true;
+                    }
+                    else
+                    {
+                        nextCenterFrequency += usableBW;
+                        complete = false;
+                    }
+
+                    // Are any frequencies in this new range?
+                    for (int i = 0; i < m_settings.m_frequencySettings.size(); i++)
+                    {
+                        if (m_settings.m_frequencySettings[i].m_enabled
+                            && (m_settings.m_frequencySettings[i].m_frequency >= nextCenterFrequency - usableBW / 2)
+                            && (m_settings.m_frequencySettings[i].m_frequency < nextCenterFrequency + usableBW / 2))
+                        {
+                            freqInRange = true;
+                            nextFrequencyIndex = i;
+
+                            // Do we need to realign for frequencies with wider bandwidths than default
+                            if (!m_settings.m_frequencySettings[i].m_channelBandwidth.isEmpty())
+                            {
+                                bool ok;
+                                int channelBW = m_settings.m_frequencySettings[i].m_channelBandwidth.toInt(&ok);
+                                if (ok)
+                                {
+                                    if (channelBW >= usableBW) {
+                                        nextCenterFrequency = m_settings.m_frequencySettings[i].m_frequency;
+                                    } else if (m_settings.m_frequencySettings[i].m_frequency - channelBW / 2 < nextCenterFrequency - usableBW / 2) {
+                                        nextCenterFrequency = m_settings.m_frequencySettings[i].m_frequency - channelBW / 2;
+                                    }
+                                }
+                            }
+
+                            break;
+                        }
+                    }
+                }
+                while (!complete && !freqInRange);
+            }
+            else
+            {
                 for (int i = 0; i < m_settings.m_frequencySettings.size(); i++)
                 {
                     if (m_settings.m_frequencySettings[i].m_enabled
-                        && (m_settings.m_frequencySettings[i].m_frequency >= nextCenterFrequency - usableBW / 2)
-                        && (m_settings.m_frequencySettings[i].m_frequency < nextCenterFrequency + usableBW / 2))
+                        && isInCurrentScanRange(m_settings.m_frequencySettings[i].m_frequency))
                     {
-                        freqInRange = true;
                         nextFrequencyIndex = i;
-
-                        // Do we need to realign for frequencies with wider bandwidths than default
-                        if (!m_settings.m_frequencySettings[i].m_channelBandwidth.isEmpty())
-                        {
-                            bool ok;
-                            int channelBW = m_settings.m_frequencySettings[i].m_channelBandwidth.toInt(&ok);
-                            if (ok)
-                            {
-                                if (channelBW >= usableBW) {
-                                    nextCenterFrequency = m_settings.m_frequencySettings[i].m_frequency;
-                                } else if (m_settings.m_frequencySettings[i].m_frequency - channelBW / 2 < nextCenterFrequency - usableBW / 2) {
-                                    nextCenterFrequency = m_settings.m_frequencySettings[i].m_frequency - channelBW / 2;
-                                }
-                            }
-                        }
-
                         break;
                     }
                 }
             }
-            while (!complete && !freqInRange);
 
             if (complete || (m_settings.m_mode == FreqScannerSettings::MULTIPLEX))
             {
@@ -454,8 +477,11 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
 
                     if (m_settings.m_mode == FreqScannerSettings::MULTIPLEX)
                     {
-                        activeFrequencySettings = &m_settings.m_frequencySettings[nextFrequencyIndex];
-                        frequency = activeFrequencySettings->m_frequency;
+                        if (nextFrequencyIndex >= 0)
+                        {
+                            activeFrequencySettings = &m_settings.m_frequencySettings[nextFrequencyIndex];
+                            frequency = activeFrequencySettings->m_frequency;
+                        }
                     }
                     else if (m_settings.m_priority == FreqScannerSettings::MAX_POWER)
                     {
@@ -464,6 +490,10 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                         // Find frequency with max power that exceeds thresholds
                         for (int i = 0; i < m_scanResults.size(); i++)
                         {
+                            if (lockDeviceFrequency && !isInCurrentScanRange(m_scanResults[i].m_frequency)) {
+                                continue;
+                            }
+
                             frequencySettings = m_settings.getFrequencySettings(m_scanResults[i].m_frequency);
                             Real threshold = m_settings.getThreshold(frequencySettings);
 
@@ -486,6 +516,11 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                         {
                             int j = m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb ?
                                 m_scanResults.size()-1 - i : i;
+
+                            if (lockDeviceFrequency && !isInCurrentScanRange(m_scanResults[j].m_frequency)) {
+                                continue;
+                            }
+
                             frequencySettings = m_settings.getFrequencySettings(m_scanResults[j].m_frequency);
                             Real threshold = m_settings.getThreshold(frequencySettings);
 
@@ -520,20 +555,23 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                             }
 
                             // Ensure we have minimum offset from DC
-                            if (offset >= 0)
+                            if (!lockDeviceFrequency)
                             {
-                                while (offset < m_settings.m_channelFrequencyOffset)
+                                if (offset >= 0)
                                 {
-                                    nextCenterFrequency -= m_settings.m_channelBandwidth;
-                                    offset += m_settings.m_channelBandwidth;
+                                    while (offset < m_settings.m_channelFrequencyOffset)
+                                    {
+                                        nextCenterFrequency -= m_settings.m_channelBandwidth;
+                                        offset += m_settings.m_channelBandwidth;
+                                    }
                                 }
-                            }
-                            else
-                            {
-                                while (abs(offset) < m_settings.m_channelFrequencyOffset)
+                                else
                                 {
-                                    nextCenterFrequency += m_settings.m_channelBandwidth;
-                                    offset -= m_settings.m_channelBandwidth;
+                                    while (abs(offset) < m_settings.m_channelFrequencyOffset)
+                                    {
+                                        nextCenterFrequency += m_settings.m_channelBandwidth;
+                                        offset -= m_settings.m_channelBandwidth;
+                                    }
                                 }
                             }
 
@@ -599,7 +637,12 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                 }
             }
 
-            if (nextCenterFrequency != m_centerFrequency) {
+            if (m_settings.m_lockDeviceFrequency) {
+                nextCenterFrequency = m_centerFrequency;
+            }
+
+            if (nextCenterFrequency != m_centerFrequency)
+            {
                 setDeviceCenterFrequency(nextCenterFrequency);
             }
 

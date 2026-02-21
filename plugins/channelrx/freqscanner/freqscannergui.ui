@@ -158,6 +158,24 @@
        </widget>
       </item>
       <item>
+       <widget class="QToolButton" name="deviceFreqLock">
+        <property name="toolTip">
+         <string>Lock device frequency to current value</string>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../../../sdrgui/resources/res.qrc">
+          <normaloff>:/unlocked.png</normaloff>
+          <normalon>:/locked.png</normalon>:/unlocked.png</iconset>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="Line" name="line">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
@@ -302,7 +320,7 @@
          <number>0</number>
         </property>
         <property name="maximum">
-         <number>2000</number>
+         <number>1000</number>
         </property>
         <property name="pageStep">
          <number>1</number>
@@ -793,6 +811,14 @@
          </property>
          <property name="toolTip">
           <string>Channel power in decibels during the previous scan</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>VAD</string>
+         </property>
+         <property name="toolTip">
+          <string>Voice level</string>
          </property>
         </column>
         <column>

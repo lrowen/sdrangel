@@ -115,6 +115,7 @@ private:
         COL_ANNOTATION,
         COL_ENABLE,
         COL_POWER,
+        COL_VAD,
         COL_ACTIVE_COUNT,
         COL_NOTES,
         COL_CHANNEL,
@@ -134,6 +135,7 @@ private slots:
     void on_thresh_valueChanged(int value);
     void on_voiceThreshold_valueChanged(int value);
     void on_voiceSquelchType_currentIndexChanged(int index);
+    void on_lockDeviceFrequency_toggled(bool checked);
     void on_priority_currentIndexChanged(int index);
     void on_measurement_currentIndexChanged(int index);
     void on_mode_currentIndexChanged(int index);

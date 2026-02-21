@@ -197,6 +197,8 @@ bool FreqScannerGUI::handleMessage(const Message& message)
                 int row = item->row();
                 QTableWidgetItem* powerItem = ui->table->item(row, COL_POWER);
                 powerItem->setData(Qt::DisplayRole, results[i].m_power);
+                QTableWidgetItem* vadItem = ui->table->item(row, COL_VAD);
+                vadItem->setData(Qt::DisplayRole, results[i].m_voiceActivityLevel);
                 FreqScannerSettings::FrequencySettings *frequencySettings = m_settings.getFrequencySettings(freq);
                 Real threshold = m_settings.getThreshold(frequencySettings);
                 bool active = results[i].m_power >= threshold;
@@ -405,6 +407,12 @@ void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
     applySettings(settingsKeys);
 }
 
+void FreqScannerGUI::on_lockDeviceFrequency_toggled(bool checked)
+{
+    m_settings.m_lockDeviceFrequency = checked;
+    applySetting("lockDeviceFrequency");
+}
+
 void FreqScannerGUI::on_priority_currentIndexChanged(int index)
 {
     m_settings.m_priority = (FreqScannerSettings::Priority)index;
@@ -584,6 +592,7 @@ FreqScannerGUI::FreqScannerGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, B
 
     ui->table->setItemDelegateForColumn(COL_FREQUENCY, new FrequencyDelegate("Auto", 3, true, ui->table));
     ui->table->setItemDelegateForColumn(COL_POWER, new DecimalDelegate(1, ui->table));
+    ui->table->setItemDelegateForColumn(COL_VAD, new DecimalDelegate(2, ui->table));
     ui->table->setItemDelegateForColumn(COL_CHANNEL_BW, new Int64Delegate(0, 10000000, ui->table));
     ui->table->setItemDelegateForColumn(COL_TH, new DecimalDelegate(1, -120.0, 0.0, ui->table));
     ui->table->setItemDelegateForColumn(COL_SQ, new DecimalDelegate(1, -120.0, 0.0, ui->table));
@@ -641,6 +650,7 @@ void FreqScannerGUI::displaySettings()
         ui->channels->setCurrentIndex(channelIndex);
     }
     ui->deltaFrequency->setValue(m_settings.m_channelFrequencyOffset);
+    ui->deviceFreqLock->setChecked(m_settings.m_lockDeviceFrequency);
     ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
     ui->channelShift->setValue(m_settings.m_channelShift);
     ui->scanTime->setValue(m_settings.m_scanTime * 10.0);
@@ -739,6 +749,10 @@ void FreqScannerGUI::addRow(const FreqScannerSettings::FrequencySettings& freque
     QTableWidgetItem* powerItem = new QTableWidgetItem();
     powerItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
     ui->table->setItem(row, COL_POWER, powerItem);
+
+    QTableWidgetItem* vadItem = new QTableWidgetItem();
+    vadItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    ui->table->setItem(row, COL_VAD, vadItem);
 
     QTableWidgetItem *activeCountItem = new QTableWidgetItem();
     activeCountItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
@@ -1296,6 +1310,7 @@ void FreqScannerGUI::resizeTable()
     ui->table->setItem(row, COL_ANNOTATION, new QTableWidgetItem("London VOLMET"));
     ui->table->setItem(row, COL_ENABLE, new QTableWidgetItem("Enable"));
     ui->table->setItem(row, COL_POWER, new QTableWidgetItem("-100.0"));
+    ui->table->setItem(row, COL_VAD, new QTableWidgetItem("0.00"));
     ui->table->setItem(row, COL_ACTIVE_COUNT, new QTableWidgetItem("10000"));
     ui->table->setItem(row, COL_NOTES, new QTableWidgetItem("A channel name"));
     ui->table->setItem(row, COL_CHANNEL, new QTableWidgetItem("Enter some notes"));
@@ -1318,6 +1333,7 @@ void FreqScannerGUI::makeUIConnections()
     QObject::connect(ui->thresh, &QDial::valueChanged, this, &FreqScannerGUI::on_thresh_valueChanged);
     QObject::connect(ui->voiceSquelch, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_voiceSquelchType_currentIndexChanged);
     QObject::connect(ui->voiceThreshold, &QDial::valueChanged, this, &FreqScannerGUI::on_voiceThreshold_valueChanged);
+    QObject::connect(ui->deviceFreqLock, &QToolButton::toggled, this, &FreqScannerGUI::on_lockDeviceFrequency_toggled);
     QObject::connect(ui->priority, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_priority_currentIndexChanged);
     QObject::connect(ui->measurement, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_measurement_currentIndexChanged);
     QObject::connect(ui->mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_mode_currentIndexChanged);

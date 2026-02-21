@@ -48,6 +48,7 @@ void FreqScannerSettings::resetToDefaults()
     m_tuneTime = 100;
     m_voiceSquelchThreshold = 0.5f;
     m_voiceSquelchType = None;
+    m_lockDeviceFrequency = false;
     m_priority = MAX_POWER;
     m_measurement = PEAK;
     m_mode = CONTINUOUS;
@@ -89,6 +90,7 @@ QByteArray FreqScannerSettings::serialize() const
     s.writeS32(14, (int)m_mode);
     s.writeList(15, m_frequencySettings);
     s.writeS32(16, m_channelShift);
+    s.writeBool(17, m_lockDeviceFrequency);
 
     s.writeList(20, m_columnIndexes);
     s.writeList(21, m_columnSizes);
@@ -145,6 +147,7 @@ bool FreqScannerSettings::deserialize(const QByteArray& data)
         d.readS32(14, (int*)&m_mode, (int)CONTINUOUS);
         d.readList(15, &m_frequencySettings);
         d.readS32(16, &m_channelShift, 0);
+        d.readBool(17, &m_lockDeviceFrequency, false);
 
         if (m_frequencySettings.size() == 0)
         {
@@ -234,6 +237,9 @@ void FreqScannerSettings::applySettings(const QStringList& settingsKeys, const F
     if (settingsKeys.contains("voiceSquelchType")) {
         m_voiceSquelchType = settings.m_voiceSquelchType;
     }
+    if (settingsKeys.contains("lockDeviceFrequency")) {
+        m_lockDeviceFrequency = settings.m_lockDeviceFrequency;
+    }
     if (settingsKeys.contains("frequencySettings")) {
         m_frequencySettings = settings.m_frequencySettings;
     }
@@ -320,6 +326,9 @@ QString FreqScannerSettings::getDebugString(const QStringList& settingsKeys, boo
     }
     if (settingsKeys.contains("voiceSquelchType") || force) {
         ostr << " m_voiceSquelchType: " << m_voiceSquelchType;
+    }
+    if (settingsKeys.contains("lockDeviceFrequency") || force) {
+        ostr << " m_lockDeviceFrequency: " << m_lockDeviceFrequency;
     }
     if (settingsKeys.contains("frequencySettings") || force)
     {
