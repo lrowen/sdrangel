@@ -382,11 +382,8 @@ void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
         ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
         m_settings.m_channelShift = 1500;
         ui->channelShift->setValue(m_settings.m_channelShift);
-        m_settings.m_priority = FreqScannerSettings::TABLE_ORDER;
-        ui->priority->setCurrentIndex((int)m_settings.m_priority);
         settingsKeys.append("channelBandwidth");
         settingsKeys.append("channelShift");
-        settingsKeys.append("priority");
         blockApplySettings(false);
     }
     else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
@@ -396,11 +393,8 @@ void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
         ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
         m_settings.m_channelShift = -1500;
         ui->channelShift->setValue(m_settings.m_channelShift);
-        m_settings.m_priority = FreqScannerSettings::TABLE_ORDER;
-        ui->priority->setCurrentIndex((int)m_settings.m_priority);
         settingsKeys.append("channelBandwidth");
         settingsKeys.append("channelShift");
-        settingsKeys.append("priority");
         blockApplySettings(false);
     }
     
