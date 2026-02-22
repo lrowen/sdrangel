@@ -197,6 +197,8 @@ bool FreqScannerGUI::handleMessage(const Message& message)
                 int row = item->row();
                 QTableWidgetItem* powerItem = ui->table->item(row, COL_POWER);
                 powerItem->setData(Qt::DisplayRole, results[i].m_power);
+                QTableWidgetItem* vadItem = ui->table->item(row, COL_VAD);
+                vadItem->setData(Qt::DisplayRole, results[i].m_voiceActivityLevel);
                 FreqScannerSettings::FrequencySettings *frequencySettings = m_settings.getFrequencySettings(freq);
                 Real threshold = m_settings.getThreshold(frequencySettings);
                 bool active = results[i].m_power >= threshold;
@@ -359,6 +361,50 @@ void FreqScannerGUI::on_thresh_valueChanged(int value)
     ui->threshText->setText(QString("%1 dB").arg(value / 10.0, 0, 'f', 1));
     m_settings.m_threshold = value / 10.0;
     applySetting("threshold");
+}
+
+void FreqScannerGUI::on_voiceThreshold_valueChanged(int value)
+{
+    ui->voiceThresholdText->setText(QString("%1").arg(value / 100.0, 0, 'f', 2));
+    m_settings.m_voiceSquelchThreshold = value / 100.0;
+    applySetting("voiceSquelchThreshold");
+}
+
+void FreqScannerGUI::on_voiceSquelchType_currentIndexChanged(int index)
+{
+    m_settings.m_voiceSquelchType = (FreqScannerSettings::VoiceSquelchType)index;
+    QStringList settingsKeys({"voiceSquelchType"});
+    
+    if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceLsb)
+    {
+        blockApplySettings(true);
+        m_settings.m_channelBandwidth = 3000;
+        ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
+        m_settings.m_channelShift = 1500;
+        ui->channelShift->setValue(m_settings.m_channelShift);
+        settingsKeys.append("channelBandwidth");
+        settingsKeys.append("channelShift");
+        blockApplySettings(false);
+    }
+    else if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::VoiceUsb)
+    {
+        blockApplySettings(true);
+        m_settings.m_channelBandwidth = 3000;
+        ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
+        m_settings.m_channelShift = -1500;
+        ui->channelShift->setValue(m_settings.m_channelShift);
+        settingsKeys.append("channelBandwidth");
+        settingsKeys.append("channelShift");
+        blockApplySettings(false);
+    }
+    
+    applySettings(settingsKeys);
+}
+
+void FreqScannerGUI::on_lockDeviceFrequency_toggled(bool checked)
+{
+    m_settings.m_lockDeviceFrequency = checked;
+    applySetting("lockDeviceFrequency");
 }
 
 void FreqScannerGUI::on_priority_currentIndexChanged(int index)
@@ -540,6 +586,7 @@ FreqScannerGUI::FreqScannerGUI(PluginAPI* pluginAPI, DeviceUISet *deviceUISet, B
 
     ui->table->setItemDelegateForColumn(COL_FREQUENCY, new FrequencyDelegate("Auto", 3, true, ui->table));
     ui->table->setItemDelegateForColumn(COL_POWER, new DecimalDelegate(1, ui->table));
+    ui->table->setItemDelegateForColumn(COL_VAD, new DecimalDelegate(2, ui->table));
     ui->table->setItemDelegateForColumn(COL_CHANNEL_BW, new Int64Delegate(0, 10000000, ui->table));
     ui->table->setItemDelegateForColumn(COL_TH, new DecimalDelegate(1, -120.0, 0.0, ui->table));
     ui->table->setItemDelegateForColumn(COL_SQ, new DecimalDelegate(1, -120.0, 0.0, ui->table));
@@ -597,6 +644,7 @@ void FreqScannerGUI::displaySettings()
         ui->channels->setCurrentIndex(channelIndex);
     }
     ui->deltaFrequency->setValue(m_settings.m_channelFrequencyOffset);
+    ui->deviceFreqLock->setChecked(m_settings.m_lockDeviceFrequency);
     ui->channelBandwidth->setValue(m_settings.m_channelBandwidth);
     ui->channelShift->setValue(m_settings.m_channelShift);
     ui->scanTime->setValue(m_settings.m_scanTime * 10.0);
@@ -607,6 +655,9 @@ void FreqScannerGUI::displaySettings()
     ui->tuneTimeText->setText(QString("%1 ms").arg(m_settings.m_tuneTime));
     ui->thresh->setValue(m_settings.m_threshold * 10.0);
     ui->threshText->setText(QString("%1 dB").arg(m_settings.m_threshold, 0, 'f', 1));
+    ui->voiceThreshold->setValue(m_settings.m_voiceSquelchThreshold * 100.0);
+    ui->voiceThresholdText->setText(QString("%1").arg(m_settings.m_voiceSquelchThreshold, 0, 'f', 2));
+    ui->voiceSquelch->setCurrentIndex((int)m_settings.m_voiceSquelchType);
     ui->priority->setCurrentIndex((int)m_settings.m_priority);
     ui->measurement->setCurrentIndex((int)m_settings.m_measurement);
     ui->mode->setCurrentIndex((int)m_settings.m_mode);
@@ -666,6 +717,12 @@ void FreqScannerGUI::on_startStop_toggled(bool checked)
     }
 }
 
+void FreqScannerGUI::on_continueScan_clicked()
+{
+    FreqScanner::MsgContinueScan* message = FreqScanner::MsgContinueScan::create();
+    m_freqScanner->getInputMessageQueue()->push(message);
+}
+
 void FreqScannerGUI::addRow(const FreqScannerSettings::FrequencySettings& frequencySettings)
 {
     int row = ui->table->rowCount();
@@ -686,6 +743,10 @@ void FreqScannerGUI::addRow(const FreqScannerSettings::FrequencySettings& freque
     QTableWidgetItem* powerItem = new QTableWidgetItem();
     powerItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
     ui->table->setItem(row, COL_POWER, powerItem);
+
+    QTableWidgetItem* vadItem = new QTableWidgetItem();
+    vadItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+    ui->table->setItem(row, COL_VAD, vadItem);
 
     QTableWidgetItem *activeCountItem = new QTableWidgetItem();
     activeCountItem->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
@@ -773,6 +834,13 @@ void FreqScannerGUI::on_removeInactive_clicked()
             m_settings.m_frequencySettings.removeAt(i);
         }
     }
+    applySetting("frequencySettings");
+}
+
+void FreqScannerGUI::on_removeAll_clicked()
+{
+    ui->table->setRowCount(0);
+    m_settings.m_frequencySettings.clear();
     applySetting("frequencySettings");
 }
 
@@ -1236,6 +1304,7 @@ void FreqScannerGUI::resizeTable()
     ui->table->setItem(row, COL_ANNOTATION, new QTableWidgetItem("London VOLMET"));
     ui->table->setItem(row, COL_ENABLE, new QTableWidgetItem("Enable"));
     ui->table->setItem(row, COL_POWER, new QTableWidgetItem("-100.0"));
+    ui->table->setItem(row, COL_VAD, new QTableWidgetItem("0.00"));
     ui->table->setItem(row, COL_ACTIVE_COUNT, new QTableWidgetItem("10000"));
     ui->table->setItem(row, COL_NOTES, new QTableWidgetItem("A channel name"));
     ui->table->setItem(row, COL_CHANNEL, new QTableWidgetItem("Enter some notes"));
@@ -1256,15 +1325,20 @@ void FreqScannerGUI::makeUIConnections()
     QObject::connect(ui->retransmitTime, &QDial::valueChanged, this, &FreqScannerGUI::on_retransmitTime_valueChanged);
     QObject::connect(ui->tuneTime, &QDial::valueChanged, this, &FreqScannerGUI::on_tuneTime_valueChanged);
     QObject::connect(ui->thresh, &QDial::valueChanged, this, &FreqScannerGUI::on_thresh_valueChanged);
+    QObject::connect(ui->voiceSquelch, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_voiceSquelchType_currentIndexChanged);
+    QObject::connect(ui->voiceThreshold, &QDial::valueChanged, this, &FreqScannerGUI::on_voiceThreshold_valueChanged);
+    QObject::connect(ui->deviceFreqLock, &QToolButton::toggled, this, &FreqScannerGUI::on_lockDeviceFrequency_toggled);
     QObject::connect(ui->priority, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_priority_currentIndexChanged);
     QObject::connect(ui->measurement, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_measurement_currentIndexChanged);
     QObject::connect(ui->mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &FreqScannerGUI::on_mode_currentIndexChanged);
     QObject::connect(ui->startStop, &ButtonSwitch::toggled, this, &FreqScannerGUI::on_startStop_toggled);
+    QObject::connect(ui->continueScan, &QPushButton::clicked, this, &FreqScannerGUI::on_continueScan_clicked);
     QObject::connect(ui->table, &QTableWidget::cellChanged, this, &FreqScannerGUI::on_table_cellChanged);
     QObject::connect(ui->addSingle, &QToolButton::clicked, this, &FreqScannerGUI::on_addSingle_clicked);
     QObject::connect(ui->addRange, &QToolButton::clicked, this, &FreqScannerGUI::on_addRange_clicked);
     QObject::connect(ui->remove, &QToolButton::clicked, this, &FreqScannerGUI::on_remove_clicked);
     QObject::connect(ui->removeInactive, &QToolButton::clicked, this, &FreqScannerGUI::on_removeInactive_clicked);
+    QObject::connect(ui->removeAll, &QToolButton::clicked, this, &FreqScannerGUI::on_removeAll_clicked);
     QObject::connect(ui->up, &QToolButton::clicked, this, &FreqScannerGUI::on_up_clicked);
     QObject::connect(ui->down, &QToolButton::clicked, this, &FreqScannerGUI::on_down_clicked);
     QObject::connect(ui->clearActiveCount, &QToolButton::clicked, this, &FreqScannerGUI::on_clearActiveCount_clicked);

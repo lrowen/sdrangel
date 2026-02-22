@@ -146,6 +146,23 @@ public:
         }
     };
 
+    class MsgContinueScan : public Message {
+        MESSAGE_CLASS_DECLARATION
+
+    public:
+
+        static MsgContinueScan* create()
+        {
+            return new MsgContinueScan();
+        }
+
+    private:
+
+        MsgContinueScan() :
+            Message()
+        {
+        }
+    };
     class MsgScanResult : public Message {
         MESSAGE_CLASS_DECLARATION
 
@@ -154,9 +171,10 @@ public:
         struct ScanResult {
             qint64 m_frequency;
             float m_power;
+            float m_voiceActivityLevel;  // 0.0-1.0, voice likelihood for SSB modes
         };
 
-        const QDateTime& getFFTStartTime() { return m_fftStartTime; }
+        const QDateTime& getFFTStartTime() const { return m_fftStartTime; }
         QList<ScanResult>& getScanResults() { return m_scanResults; }
 
         static MsgScanResult* create(const QDateTime& fftStartTime) {
@@ -421,6 +439,7 @@ private:
     void startScan();
     void stopScan();
     void initScan();
+    void continueScan();
     void processScanResults(const QDateTime& fftStartTime, const QList<MsgScanResult::ScanResult>& results);
     void setDeviceCenterFrequency(qint64 frequency);
     void applyChannelSetting(const QString& channel);
@@ -428,6 +447,12 @@ private:
     void unmuteAll();
     void mute(unsigned int deviceSetIndex, unsigned int channelIndex);
     void unmute(unsigned int deviceSetIndex, unsigned int channelIndex);
+    static bool checkThresholds(
+        FreqScannerSettings::VoiceSquelchType voiceSquelchType, 
+        const FreqScanner::MsgScanResult::ScanResult& result,
+        Real powerThreshold,
+        Real voiceSquelchThreshold
+    );
 
     static QList<SWGSDRangel::SWGFreqScannerFrequency *> *createFrequencyList(const FreqScannerSettings& settings);
 
@@ -440,4 +465,3 @@ private slots:
 };
 
 #endif // INCLUDE_FREQSCANNER_H
-

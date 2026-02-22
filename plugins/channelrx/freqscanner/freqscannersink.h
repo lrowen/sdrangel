@@ -74,12 +74,24 @@ private:
     FixedAverage2D<Real> m_fftAverage;     // magSq average
     QVector<Real> m_magSq;
     int m_averageCount;
+    QVector<Real> m_voiceLevelSum;         // Sum of voice levels for averaging
+    QVector<int> m_voiceLevelCount;        // Count of voice level samples
+
+    // Cepstral analysis FFT engines for formant detection
+    int m_cepstrumSequenceInverse;
+    int m_cepstrumSequenceForward;
+    FFTEngine *m_cepstrumFFTInverse;
+    FFTEngine *m_cepstrumFFTForward;
+    int m_cepstrumSize;
 
     void processOneSample(Complex &ci);
     MessageQueue *getMessageQueueToChannel() { return m_messageQueueToChannel; }
     Real totalPower(int bin, int channelBins) const;
     Real peakPower(int bin, int channelBins) const;
     Real magSq(int bin) const;
+    Real magSqFromRawFFT(int bin) const;
+    Real voiceActivityLevel(int bin, int channelBins, bool isLSB);
+    void getFormantEnvelope(int startBin, int endBin, QVector<Real>& envelope, Real *pitchHz = nullptr);
 };
 
 #endif // INCLUDE_FREQSCANNERSINK_H

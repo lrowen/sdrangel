@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>516</width>
-    <height>423</height>
+    <width>676</width>
+    <height>410</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -39,7 +39,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>511</width>
+     <width>671</width>
      <height>411</height>
     </rect>
    </property>
@@ -158,6 +158,24 @@
        </widget>
       </item>
       <item>
+       <widget class="QToolButton" name="deviceFreqLock">
+        <property name="toolTip">
+         <string>Lock device frequency to current value</string>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../../../sdrgui/resources/res.qrc">
+          <normaloff>:/unlocked.png</normaloff>
+          <normalon>:/locked.png</normalon>:/unlocked.png</iconset>
+        </property>
+        <property name="checkable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="Line" name="line">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
@@ -166,6 +184,9 @@
       </item>
       <item>
        <spacer name="horizontalSpacer">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
         <property name="sizeHint" stdset="0">
          <size>
           <width>40</width>
@@ -259,6 +280,9 @@
       </item>
       <item>
        <spacer name="horizontalSpacer_3">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
         <property name="sizeHint" stdset="0">
          <size>
           <width>40</width>
@@ -526,6 +550,9 @@
       </item>
       <item>
        <spacer name="horizontalSpacer_4">
+        <property name="orientation">
+         <enum>Qt::Vertical</enum>
+        </property>
         <property name="sizeHint" stdset="0">
          <size>
           <width>40</width>
@@ -651,6 +678,26 @@
        </widget>
       </item>
       <item>
+       <widget class="QPushButton" name="continueScan">
+        <property name="maximumSize">
+         <size>
+          <width>32</width>
+          <height>16777215</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>Force scanner to continue on next frequency</string>
+        </property>
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../../../sdrgui/resources/res.qrc">
+          <normaloff>:/arrow_left.png</normaloff>:/arrow_left.png</iconset>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QLabel" name="status">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
@@ -660,6 +707,67 @@
         </property>
         <property name="text">
          <string/>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="voiceSquelchLabel">
+        <property name="text">
+         <string>VAD</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QComboBox" name="voiceSquelch">
+        <property name="toolTip">
+         <string>Voice Activity Detection</string>
+        </property>
+        <item>
+         <property name="text">
+          <string>None</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>LSB</string>
+         </property>
+        </item>
+        <item>
+         <property name="text">
+          <string>USB</string>
+         </property>
+        </item>
+       </widget>
+      </item>
+      <item>
+       <widget class="QDial" name="voiceThreshold">
+        <property name="maximumSize">
+         <size>
+          <width>24</width>
+          <height>24</height>
+         </size>
+        </property>
+        <property name="toolTip">
+         <string>VAD score minimum level</string>
+        </property>
+        <property name="minimum">
+         <number>0</number>
+        </property>
+        <property name="maximum">
+         <number>100</number>
+        </property>
+        <property name="pageStep">
+         <number>1</number>
+        </property>
+        <property name="value">
+         <number>50</number>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="voiceThresholdText">
+        <property name="text">
+         <string>0.01</string>
         </property>
        </widget>
       </item>
@@ -703,6 +811,14 @@
          </property>
          <property name="toolTip">
           <string>Channel power in decibels during the previous scan</string>
+         </property>
+        </column>
+        <column>
+         <property name="text">
+          <string>VAD</string>
+         </property>
+         <property name="toolTip">
+          <string>Voice level</string>
          </property>
         </column>
         <column>
@@ -806,6 +922,16 @@ Leave blank for no adjustment</string>
          </widget>
         </item>
         <item>
+         <widget class="QToolButton" name="removeAll">
+          <property name="toolTip">
+           <string>Remove selected items</string>
+          </property>
+          <property name="text">
+           <string>Remove All</string>
+          </property>
+         </widget>
+        </item>
+        <item>
          <widget class="QToolButton" name="up">
           <property name="toolTip">
            <string>Move selected rows up</string>
@@ -863,6 +989,9 @@ Leave blank for no adjustment</string>
         </item>
         <item>
          <spacer name="horizontalSpacer_2">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
           <property name="sizeHint" stdset="0">
            <size>
             <width>40</width>
@@ -899,15 +1028,15 @@ Leave blank for no adjustment</string>
    <header>gui/buttonswitch.h</header>
   </customwidget>
   <customwidget>
-   <class>ValueDialZ</class>
-   <extends>QWidget</extends>
-   <header>gui/valuedialz.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>RollupContents</class>
    <extends>QWidget</extends>
    <header>gui/rollupcontents.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>ValueDialZ</class>
+   <extends>QWidget</extends>
+   <header>gui/valuedialz.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

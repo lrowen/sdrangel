@@ -30,47 +30,51 @@ Use the wheels of keyboard to adjust the minimum frequency shift in Hz from the 
 
 This setting is typically used to avoid having the channel (1) centered at DC, which can be problematic for some demodulators used with SDRs with a DC spike.
 
-<h3>3: Active frequency power</h3>
+<h3>3: Lock device frequency</h3>
+
+Locks device frequency to its current value. This is useful for network devices like the TCP input that has a very long latency for setting the frequency. It makes impractical to move the device frequency. In this kind of setup you have to make sure that the scanned channels all fit in the same baseband.
+
+<h3>4: Active frequency power</h3>
 
 Average power in dB relative to a +/- 1.0 amplitude signal received for the active frequency. This is set to '-' while scanning.
 
-<h3>4: TH - Threshold</h3>
+<h3>5: TH - Threshold</h3>
 
 Power threshold in dB that determines whether a frequency is active or not.
 
-<h3>5: t_delta_f - Tune time</h3>
+<h3>6: t_delta_f - Tune time</h3>
 
 Specifies the time in milliseconds that the Frequency Scanner should wait after adjusting the device center frequency, before starting a measurement.
 This time should take in to account PLL settle time and the device to host transfer latency, so that the measurement only starts when IQ data
 that corresponds to the set frequency is being received.
 
-<h3>6: t_s - Scan time</h3>
+<h3>7: t_s - Scan time</h3>
 
 Specifies the time in seconds that the Frequency Scanner will average its power measurement over.
 
-<h3>7: t_rtx - Retransmission Time / t_rx Receive Time</h3>
+<h3>8: t_rtx - Retransmission Time / t_rx Receive Time</h3>
 
 t_rtx: When Run Mode (11) is not Multiplex, specifies the time in seconds that the Frequency Scanner will wait after the power on the active frequency falls below the threshold, before restarting
 scanning. This enables the channel to remain tuned to a single frequency while there is a temporary break in transmission.
 
 t_rx: When Run Mode (11) is Multiplex, specifies the time in seconds the channel will be tuned to each frequency.
 
-<h3>8: Ch BW - Channel Bandwidth</h3>
+<h3>9: Ch BW - Channel Bandwidth</h3>
 
 This specifies the bandwidth of the channels to be scanned.
 
-<h3>9: Channel shift</h3>
+<h3>10: Channel shift</h3>
 
 This shift is applied to the controlled channel from the scanned center frequency. This is useful for SSB or CW or generally whenever the signal of interest is only on one side of the controlled channel center frequency.
 
-<h3>10: Pri - Priority</h3>
+<h3>11: Pri - Priority</h3>
 
 Specifies which frequency will be chosen as the active frequency, when multiple frequencies exceed the threshold (4):
 
-- Max power: The frequency with the highest power will be chosen
+- Max power: The frequency with the highest power will be chosen. If VAD is active this is the highest voice score/
 - Table order: The frequency first in the frequency table (14) will be chosen.
 
-<h3>11: Meas - Power Measurement</h3>
+<h3>12: Meas - Power Measurement</h3>
 
 Specifies how power is measured. In both cases, a FFT is used.
 FFT size is typically the same as used for the Main Spectrum, but may be increased to ensure at least 8 bins cover the channel bandwidth (8).
@@ -82,7 +86,7 @@ The first and last bins are excluded from the measurement (to reduce spectral le
 Peak can be used when you wish to set the threshold roughly according to the level displayed in the Main Spectrum.
 Total is potentially more useful for wideband signals, that are close to the noise floor.
 
-<h3>12: Run Mode</h3>
+<h3>13: Run Mode</h3>
 
 Specifies the run mode:
 
@@ -91,18 +95,38 @@ Specifies the run mode:
 - Scan only: All frequencies are scanned repeatedly. The channel will not be tuned. This mode is just for counting how often frequencies are active, which can be seen in the Active Count column in the frequency table (14).
 - Multiplex: Frequencies will be stepped through sequentially and repeatedly, with the channel (1) being tuned for the time specified by t_rx (7).
 
-<h3>13: Start/Stop Scanning</h3>
+<h3>14: Start/Stop Scanning</h3>
 
 Press this button to start or stop scanning.
 
-<h3>14: Status Text</h3>
+<h3>15: Restart scanning</h3>
+
+Forces resuming scanning.
+
+<h3>16: Status Text</h3>
 
 Displays the current status of the Frequency Scanner.
 
 - "Scanning": When scanning for active frequencies.
 - Frequency and annotation for active frequency.
 
-<h3>15: Frequency Table</h3>
+<h3>17: Voice Activity Detection (VAD) mode</h3>
+
+  - **None**: No VAD is active. Scanning is based on channel power only
+  - **LSB**: For SSB LSB, scanning is based on the likelihood of the audio to be a human voice. This yields a score between 0.0 and 1.0 that can be used to control the scanner (18)
+  - **USB**: Same thing but for SSB USB mode
+
+SSB voice detection makes the following assumptions:
+  - the channel bandwidth (9) is set to 3000 Hz and the shift (10) to 1500 Hz for LSB and -1500 Hz for USB so that the audio spectrum from 0 to 3000 Hz fits in the passband.
+  - as most of the time transmissions occur on integer multiples of the kHz you must set your scanning frequencies as a comb of frequencies 1 kHz apart on 500 Hz points (e.g 7110.5, 7111.5, ... kHz)
+  - the VAD threshold value (18) works best for values in the 0.75~0.85 range.
+  - of course you must make sure that the controlled channel supports SSB and is set to the correct sideband mode.
+
+<h3>18: Voice Activity threshold</h3>
+
+In LSB and USB VAD modes, voice likelihood score above which a channel is declared active.
+
+<h3> Frequency Table</h3>
 
 The frequency table contains the list of frequencies to be scanned, along with results of a scan. The columns are:
 
@@ -110,6 +134,7 @@ The frequency table contains the list of frequencies to be scanned, along with r
 - Annotation: An annotation (description) for the frequency, that is obtained from the closest matching [annotation marker](../../../sdrgui/gui/spectrummarkers.md) in the Main Spectrum.
 - Enable: Determines whether the frequency will be scanned. This can be used to temporarily disable frequencies you aren't interested in.
 - Power (dB): Displays the measured power in decibels from the last scan. The cell will have a green background if the power was above the threshold (4).
+- VAD: Voice activity likelihood score in the [0.0, 1.0] range
 - Active Count: Displays the number of scans in which the power for this frequency was above the threshold (4). This allows you to see which frequencies are commonly in use.
 - Notes: Available for user-entry of notes/information about this frequency.
 - Channel: Specifies the channel that should be tuned when this frequency is active. If blank, the common Channel setting (1) is used.
@@ -127,32 +152,36 @@ Right clicking on a cell will display a popup menu:
 - Remove selected rows.
 - Tune selected channel (1) to the frequency in the row clicked on.
 
-<h3>16: Add</h3>
+<h3>20: Add</h3>
 
 Press to add a single row to the frequency table (14).
 
-<h3>17: Add Range</h3>
+<h3>21: Add Range</h3>
 
-Press to add a range of frequencies to the frequency table (14). A dialog is displayed with start and stop frequencies, as well as a step value.
+Press to add a range of frequencies to the frequency table. A dialog is displayed with start and stop frequencies, as well as a step value.
 The step value should typically be an integer multiple of the channel bandwidth (8).
 
-<h3>18: Remove</h3>
+<h3>22: Remove</h3>
 
 Removes the selected rows from the frequency table (14). Press Ctrl-A to select all rows.
 
-<h3>19: Remove Inactive</h3>
+<h3>23: Remove Inactive</h3>
 
 Removes all rows with Active Count of 0.
 
-<h3>20: Up</h3>
+<h3>24: Remove all</h3>
+
+Remove all rows unconditionnally
+
+<h3>25: Up</h3>
 
 Moves the selected rows up the frequency table (14).
 
-<h3>21: Down</h3>
+<h3>26: Down</h3>
 
 Moves the selected rows the the frequency table (14).
 
-<h3>22: Import Frequencies from .csv</h3>
+<h3>27: Import Frequencies from .csv</h3>
 
 Imports frequencies from a .csv file.
 
@@ -160,11 +189,11 @@ The expected column names are "Freq (Hz)", "Enable", "Notes", "Channel", "Ch BW 
 
 Annotations are not included. These should be imported via the Spectrum Markers dialog.
 
-<h3>23: Export Frequencies to .csv</h3>
+<h3>28: Export Frequencies to .csv</h3>
 
 Exports frequencies to a .csv file. Note that annotations are not included. These should be exported via the Spectrum Markers dialog.
 
-<h3>24: Clear Active Count</h3>
+<h3>29: Clear Active Count</h3>
 
 Press to reset the value in the Active Count column to 0 for all rows.
 
