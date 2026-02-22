@@ -131,15 +131,6 @@ void FreqScannerSink::processOneSample(Complex &ci)
                 qint64 startFrequency = m_centerFrequency - m_scannerSampleRate / 2;
                 qint64 diff = frequency - startFrequency;
                 float binBW = m_scannerSampleRate / (float)m_fftSize;
-                // qDebug() << "FreqScannerSink::processOneSample:" 
-                //     << "startFrequency" << startFrequency
-                //     << "m_scannerSampleRate" << m_scannerSampleRate
-                //     << "m_centerFrequency" << m_centerFrequency
-                //     << "m_fftSize" << m_fftSize
-                //     << "frequency" << frequency 
-                //     << "diff" << diff 
-                //     << "binBW" << binBW
-                //     << "m_binsPerChannel" << m_binsPerChannel;
 
                 // avoid spectrum edges where there may be aliasing from half-band filters
                 if ((diff >= m_scannerSampleRate / 8) && (diff < m_scannerSampleRate * 7 / 8))
@@ -234,7 +225,6 @@ void FreqScannerSink::processOneSample(Complex &ci)
                                 }
                             }
 
-                            //qDebug() << "startFrequency:" << startFrequency << "m_scannerSampleRate:" << m_scannerSampleRate << "m_centerFrequency:" << m_centerFrequency << "frequency" << frequency << "bin" << bin << "power" << power << "voiceLevel" << voiceLevel;
                             FreqScanner::MsgScanResult::ScanResult result = {frequency, power, voiceLevel};
                             results.append(result);
                         }
@@ -449,9 +439,9 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     // Calculate noise floor from formant envelope
     Real noiseFloor = 0.0;
     Real maxEnv = 0.0;
-    for (int i = 0; i < formantEnvelope.size(); i++) {
-        noiseFloor += formantEnvelope[i];
-        maxEnv = std::max(maxEnv, formantEnvelope[i]);
+    for (const Real env : formantEnvelope) {
+        noiseFloor += env;
+        maxEnv = std::max(maxEnv, env);
     }
     noiseFloor = formantEnvelope.size() > 0 ? noiseFloor / formantEnvelope.size() : 1e-12;
     
@@ -477,7 +467,8 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     QVector<Real> formantMags;
 
     // Simple peak detection in formant envelope
-    for (int i = 1; i < formantEnvelope.size() - 1; i++)
+    const qsizetype formantEnvelopeSize = formantEnvelope.size();
+    for (qsizetype i = 1; i + 1 < formantEnvelopeSize; ++i)
     {
         Real prev = formantEnvelope[i - 1];
         Real curr = formantEnvelope[i];
@@ -486,7 +477,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
         // Local maximum above threshold
         if (curr > prev && curr > next && curr > threshold)
         {
-            int absBin = startBin + i;
+            int absBin = startBin + static_cast<int>(i);
             // Use SIGNED offset to distinguish USB from LSB and reject mistuned signals
             // USB: formants at positive offset (100-3000 Hz above carrier)
             // LSB: formants at negative offset (-3000 to -100 Hz below carrier)
@@ -514,19 +505,21 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     // Convert to absolute frequencies since F1/F2 validation expects positive values
     QVector<float> formantFreqs;
     QVector<int> formantIndices;
+    const qsizetype formantBinsSize = formantBins.size();
     
-    for (int i = 0; i < formantBins.size(); i++)
+    for (qsizetype i = 0; i < formantBinsSize; ++i)
     {
         // Use absolute value for formant frequency analysis (F1, F2 ranges are defined as positive)
         float freqOffset = std::abs(formantBins[i] - carrierBin) * binBW;
         formantFreqs.append(freqOffset);
-        formantIndices.append(i);
+        formantIndices.append(static_cast<int>(i));
     }
     
     // Simple insertion sort by frequency
-    for (int i = 1; i < formantFreqs.size(); i++)
+    const qsizetype formantFreqsSize = formantFreqs.size();
+    for (qsizetype i = 1; i < formantFreqsSize; ++i)
     {
-        for (int j = i; j > 0 && formantFreqs[j] < formantFreqs[j - 1]; j--)
+        for (qsizetype j = i; j > 0 && formantFreqs[j] < formantFreqs[j - 1]; --j)
         {
             std::swap(formantFreqs[j], formantFreqs[j - 1]);
             std::swap(formantIndices[j], formantIndices[j - 1]);
@@ -541,8 +534,9 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     QVector<int> mergedFormantIndices;
     
     const float minFormantSpacing = 400.0; // Hz - minimum spacing between real formants
+    const qsizetype sortedFormantFreqsSize = formantFreqs.size();
     
-    for (int i = 0; i < formantFreqs.size(); i++)
+    for (qsizetype i = 0; i < sortedFormantFreqsSize; ++i)
     {
         if (i == 0 || formantFreqs[i] - mergedFormantFreqs.back() >= minFormantSpacing)
         {
@@ -575,7 +569,8 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     // Check formant spacing (voice formants should be 400-1500 Hz apart)
     // F1-F2 spacing is typically 600-1200 Hz
     bool goodSpacing = false;
-    for (int i = 0; i < formantFreqs.size() - 1; i++)
+    const qsizetype mergedFormantFreqsSize = formantFreqs.size();
+    for (qsizetype i = 0; i + 1 < mergedFormantFreqsSize; ++i)
     {
         float spacing = formantFreqs[i + 1] - formantFreqs[i];
         if (spacing >= 400.0 && spacing <= 1500.0) {
@@ -612,8 +607,9 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     Real f2Mag = 0.0;
     int f2Idx = -1;
     float f2Freq = 0.0;
+    const qsizetype validatedFormantFreqsSize = formantFreqs.size();
     
-    for (int i = 1; i < formantFreqs.size(); i++)
+    for (qsizetype i = 1; i < validatedFormantFreqsSize; ++i)
     {
         float freqOffset = formantFreqs[i];
         float f1ToF2Spacing = freqOffset - formantFreqs[0];
@@ -773,7 +769,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
     // Score from formant magnitude (strong formants = strong voice)
     // Higher magnitudes indicate clearer voice detection
     // Make this threshold appropriately high to prefer strong signals
-    float magnitudeScore = std::min((float)(f1Mag + f2Mag) / (float)(noiseFloor * 6.0), 1.0f);
+    float magnitudeScore = std::min((f1Mag + f2Mag) / (noiseFloor * 6.0f), 1.0f);
     score += magnitudeScore * 0.4; // 40% weight
 
     // Apply a soft pitch-based weighting. Pitch helps detect detuning, but should not gate voice.
@@ -801,7 +797,7 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
         // Check harmonic-comb alignment against the estimated pitch.
         // A wrong carrier offset shifts all harmonics by a constant frequency,
         // so they no longer align with integer multiples of pitch.
-        const float harmonicToleranceHz = std::max(2.0f * binBW, 0.18f * (float) pitchHz);
+        const float harmonicToleranceHz = std::max(2.0f * binBW, 0.18f * pitchHz);
         Real rawNoiseFloor = 0.0;
         int rawBinCount = 0;
 
@@ -837,12 +833,12 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
                 continue;
             }
 
-            float residue = std::fmod(voiceOffset, (float) pitchHz);
+            float residue = std::fmod(voiceOffset, pitchHz);
             if (residue < 0.0f) {
-                residue += (float) pitchHz;
+                residue += pitchHz;
             }
 
-            float harmonicDistance = std::min(residue, (float) pitchHz - residue);
+            float harmonicDistance = std::min(residue, pitchHz - residue);
             Real weightedEnergy = std::max(binEnergy - rawNoiseFloor, (Real) 0.0);
 
             totalEnergy += weightedEnergy;
@@ -863,8 +859,8 @@ Real FreqScannerSink::voiceActivityLevel(int bin, int channelBins, bool isLSB)
         // Check formant harmonic-index plausibility.
         // Wrong carrier tuning that shifts spectrum down can make F2/F3 appear as F1/F2.
         // In that case the implied harmonic indices become unusually high.
-        float f1HarmonicIndex = formantFreqs[0] / (float) pitchHz;
-        float f2HarmonicIndex = f2Freq / (float) pitchHz;
+        float f1HarmonicIndex = formantFreqs[0] / pitchHz;
+        float f2HarmonicIndex = f2Freq / pitchHz;
         float harmonicGap = f2HarmonicIndex - f1HarmonicIndex;
 
         float f1IndexScore = 1.0f;

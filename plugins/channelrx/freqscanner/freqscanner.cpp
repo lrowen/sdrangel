@@ -500,26 +500,22 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
 
                             if (m_settings.m_voiceSquelchType == FreqScannerSettings::VoiceSquelchType::None)
                             {
-                                if (m_scanResults[i].m_power >= threshold)
+                                if ((m_scanResults[i].m_power >= threshold) 
+                                && (!activeFrequencySettings || (m_scanResults[i].m_power > maxPower)))
                                 {
-                                    if (!activeFrequencySettings || (m_scanResults[i].m_power > maxPower))
-                                    {
-                                        frequency = m_scanResults[i].m_frequency;
-                                        maxPower = m_scanResults[i].m_power;
-                                        activeFrequencySettings = frequencySettings;
-                                    }
+                                    frequency = m_scanResults[i].m_frequency;
+                                    maxPower = m_scanResults[i].m_power;
+                                    activeFrequencySettings = frequencySettings;
                                 }
                             }
                             else // VAD
                             {
-                                if (m_scanResults[i].m_voiceActivityLevel >= m_settings.m_voiceSquelchThreshold)
+                                if ((m_scanResults[i].m_voiceActivityLevel >= m_settings.m_voiceSquelchThreshold) 
+                                && (!activeFrequencySettings || (m_scanResults[i].m_voiceActivityLevel > maxVoiceActivityLevel)))
                                 {
-                                    if (!activeFrequencySettings || (m_scanResults[i].m_voiceActivityLevel > maxVoiceActivityLevel))
-                                    {
-                                        frequency = m_scanResults[i].m_frequency;
-                                        maxVoiceActivityLevel = m_scanResults[i].m_voiceActivityLevel;
-                                        activeFrequencySettings = frequencySettings;
-                                    }
+                                    frequency = m_scanResults[i].m_frequency;
+                                    maxVoiceActivityLevel = m_scanResults[i].m_voiceActivityLevel;
+                                    activeFrequencySettings = frequencySettings;
                                 }
                             }
                         }
@@ -540,8 +536,6 @@ void FreqScanner::processScanResults(const QDateTime& fftStartTime, const QList<
                             Real threshold = m_settings.getThreshold(frequencySettings);
 
                             if (checkThresholds(m_settings.m_voiceSquelchType, m_scanResults[j], threshold, m_settings.m_voiceSquelchThreshold))
-                            // if ((m_scanResults[j].m_power >= threshold)
-                            // && checkVoiceThreshold(m_settings.m_voiceSquelchType, m_scanResults[j].m_voiceActivityLevel, m_settings.m_voiceSquelchThreshold))
                             {
                                 frequency = m_scanResults[j].m_frequency;
                                 activeFrequencySettings = frequencySettings;

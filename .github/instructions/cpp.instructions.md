@@ -20,6 +20,7 @@ These instructions guide Copilot to generate code that aligns with modern Qt C++
 - Use **auto** for type deduction when it improves readability
 - Utilize **smart pointers** (`std::unique_ptr`, `std::shared_ptr`) over raw pointers
 - Apply **range-based for loops** instead of traditional iterator loops
+- When the loop index is only used to access container elements, prefer **range-based loops** to avoid index/type mismatch and off-by-one errors (common Sonar findings)
 - Use **constexpr** for compile-time constants and functions
 - Leverage **structured bindings** for tuple/pair unpacking
 - Use **std::optional** for optional values instead of null pointers

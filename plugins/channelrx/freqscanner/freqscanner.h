@@ -447,7 +447,7 @@ private:
     void unmuteAll();
     void mute(unsigned int deviceSetIndex, unsigned int channelIndex);
     void unmute(unsigned int deviceSetIndex, unsigned int channelIndex);
-    bool checkThresholds(
+    static bool checkThresholds(
         FreqScannerSettings::VoiceSquelchType voiceSquelchType, 
         const FreqScanner::MsgScanResult::ScanResult& result,
         Real powerThreshold,
